@@ -63,13 +63,14 @@ docker build -t aeroswarm-agent:latest .
 
 ```
 AeroSwarm/
-├── frontend/         # Next.js 14 — Grid Dashboard, Terminal panels, VFS editor
-├── backend/          # FastAPI — Orchestrator, Docker Manager, Git Manager, WebSocket streaming
-├── agent-engine/     # LangGraph worker — runs inside each Docker container
+├── AeroSwarm PRD.md          # ← Product Requirements Document (source of truth)
+├── frontend/                 # Next.js 14 — Grid Dashboard, Terminal panels, VFS editor
+├── backend/                  # FastAPI — Orchestrator, Docker Manager, Git Manager, WebSocket streaming
+├── agent-engine/             # LangGraph worker — runs inside each Docker container
 ├── infra/
-│   ├── docker/       # docker-compose.yml for local dev
-│   ├── k8s/          # Kubernetes manifests (Phase 3)
-│   └── traefik/      # Traefik dynamic routing config
+│   ├── docker/               # docker-compose.yml for local dev
+│   ├── k8s/                  # Kubernetes manifests (Phase 3)
+│   └── traefik/              # Traefik dynamic routing config
 └── docs/
     └── INITIAL_INVESTIGATION.md   # Full architecture investigation & phase plan
 ```
@@ -84,7 +85,7 @@ AeroSwarm/
 | 2 — Web Interface | 5–8 | Next.js Grid Dashboard with live terminal streaming |
 | 3 — Previews & Merge | 9–12 | Traefik live previews + visual 3-way merge UI + K8s deployment |
 
-See [docs/INITIAL_INVESTIGATION.md](docs/INITIAL_INVESTIGATION.md) for the full technical investigation.
+See [AeroSwarm PRD.md](AeroSwarm%20PRD.md) for the full product requirements and [docs/INITIAL_INVESTIGATION.md](docs/INITIAL_INVESTIGATION.md) for the technical investigation.
 
 ---
 

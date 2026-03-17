@@ -24,6 +24,9 @@ out/
 .DS_Store
 Thumbs.db
 
+# Original PDF (use AeroSwarm PRD.md instead)
+*.pdf
+
 # IDE
 .idea/
 .vscode/
