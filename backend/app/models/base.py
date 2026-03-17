@@ -14,6 +14,10 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
     repo_url: Mapped[str] = mapped_column(Text, nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     # planning | running | merging | done | failed
@@ -21,6 +25,8 @@ class Session(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     tasks: Mapped[list["Task"]] = relationship("Task", back_populates="session", cascade="all, delete-orphan")
+    audit_events: Mapped[list["AuditEvent"]] = relationship("AuditEvent", back_populates="session")
+    owner: Mapped["User | None"] = relationship("User", back_populates="sessions")
 
 
 class Task(Base):
@@ -39,6 +45,7 @@ class Task(Base):
     session: Mapped["Session"] = relationship("Session", back_populates="tasks")
     agent: Mapped["Agent | None"] = relationship("Agent", back_populates="task", uselist=False)
     merge_request: Mapped["MergeRequest | None"] = relationship("MergeRequest", back_populates="task", uselist=False)
+    audit_events: Mapped[list["AuditEvent"]] = relationship("AuditEvent", back_populates="task")
 
 
 class Agent(Base):
@@ -55,6 +62,7 @@ class Agent(Base):
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     task: Mapped["Task"] = relationship("Task", back_populates="agent")
+    audit_events: Mapped[list["AuditEvent"]] = relationship("AuditEvent", back_populates="agent")
 
 
 class MergeRequest(Base):
@@ -71,3 +79,81 @@ class MergeRequest(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
 
     task: Mapped["Task"] = relationship("Task", back_populates="merge_request")
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+    )
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+    )
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agents.id", ondelete="CASCADE"),
+    )
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    actor: Mapped[str] = mapped_column(String(100), nullable=False)
+    details: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    session: Mapped["Session | None"] = relationship("Session", back_populates="audit_events")
+    task: Mapped["Task | None"] = relationship("Task", back_populates="audit_events")
+    agent: Mapped["Agent | None"] = relationship("Agent", back_populates="audit_events")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    sessions: Mapped[list["Session"]] = relationship("Session", back_populates="owner")
+    auth_sessions: Mapped[list["AuthSession"]] = relationship("AuthSession", back_populates="user")
+    password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
+        "PasswordResetToken",
+        back_populates="user",
+    )
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    refresh_token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    user_agent: Mapped[str | None] = mapped_column(Text)
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship("User", back_populates="auth_sessions")
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship("User", back_populates="password_reset_tokens")

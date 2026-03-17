@@ -8,13 +8,33 @@
 import { AgentCard } from "./AgentCard";
 import { useAgents } from "@/lib/hooks/useAgents";
 
-export function AgentGrid() {
-  const { agents, isLoading } = useAgents();
+interface AgentGridProps {
+  sessionId?: string;
+}
+
+export function AgentGrid({ sessionId }: AgentGridProps) {
+  const { agents, isLoading, error } = useAgents(sessionId);
+
+  if (!sessionId) {
+    return (
+      <div className="border border-dashed border-gray-700 rounded-xl p-12 text-center text-gray-500">
+        Launch a session to see active agents.
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
       <div className="text-gray-400 text-sm animate-pulse">
         Loading agents...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="border border-red-900 bg-red-950/40 text-red-300 rounded-xl p-6 text-sm">
+        Failed to load agents: {error instanceof Error ? error.message : "Unknown error"}
       </div>
     );
   }

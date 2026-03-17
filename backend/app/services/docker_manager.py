@@ -11,14 +11,12 @@ Each agent container:
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Sequence
 
 import docker
 from docker.errors import DockerException
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.base import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +31,6 @@ class DockerManagerService:
 
     async def spawn_agent(
         self,
-        db: AsyncSession,
         task_id: uuid.UUID,
         worktree_path: str,
         scope_dir: str,
@@ -63,13 +60,14 @@ class DockerManagerService:
                 "AGENT_ID": str(agent_id),
                 "TASK_ID": str(task_id),
                 "TASK_DESCRIPTION": task_description,
-                "SCOPE_DIR": scope_dir,
+                "SCOPE_DIR": f"/workspace/{scope_dir}",
                 "OPENAI_API_KEY": settings.OPENAI_API_KEY,
+                "API_BEARER_TOKEN": settings.API_BEARER_TOKEN,
                 "REDIS_URL": settings.REDIS_URL,
                 "BACKEND_API_URL": "http://aeroswarm-backend:8000",
             },
             volumes={
-                worktree_path: {"bind": f"/workspace/{scope_dir}", "mode": "rw"},
+                worktree_path: {"bind": "/workspace", "mode": "rw"},
             },
             ports={f"{port}/tcp": port},
             # Security: non-root user
@@ -78,7 +76,7 @@ class DockerManagerService:
             mem_limit="2g",
             cpu_quota=100000,  # 1 CPU
             # No network access to internal VPC
-            network="aeroswarm-agent-net",
+            network="aeroswarm-net",
         )
         return container.id  # type: ignore[return-value]
 
@@ -103,3 +101,18 @@ class DockerManagerService:
             return container.logs(tail=tail).decode("utf-8", errors="replace")
         except DockerException:
             return ""
+
+    def exec_command(
+        self,
+        container_id: str,
+        command: Sequence[str],
+        workdir: str = "/workspace",
+    ) -> tuple[int, str]:
+        """Run a command inside an agent container and return exit code + output."""
+        if self._client is None:
+            raise RuntimeError("Docker daemon is not accessible")
+
+        container = self._client.containers.get(container_id)
+        result = container.exec_run(list(command), workdir=workdir)
+        output = result.output.decode("utf-8", errors="replace")
+        return int(result.exit_code), output

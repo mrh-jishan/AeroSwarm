@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 
+import httpx
 import redis.asyncio as aioredis
 
 from agent.graph import build_graph
@@ -24,6 +25,8 @@ async def main() -> None:
     task_description = os.environ["TASK_DESCRIPTION"]
     scope_dir = os.environ.get("SCOPE_DIR", "/workspace")
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    backend_api_url = os.environ.get("BACKEND_API_URL", "http://localhost:8000")
+    api_bearer_token = os.environ.get("API_BEARER_TOKEN", "")
 
     # Redis connection for log streaming
     r = await aioredis.from_url(redis_url, decode_responses=True)
@@ -32,9 +35,23 @@ async def main() -> None:
         await r.publish(f"logs:{agent_id}", msg)
         print(msg, flush=True)  # also log to container stdout
 
+    async def update_status(status: str) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    f"{backend_api_url}/api/agents/{agent_id}/status",
+                    headers={
+                        "Authorization": f"Bearer {api_bearer_token}",
+                    } if api_bearer_token else None,
+                    json={"status": status},
+                )
+        except Exception as exc:
+            await publish(f"[warning] Failed to update agent status to {status}: {exc}")
+
     await publish(f"[AeroSwarm Agent {agent_id}] Starting...")
     await publish(f"[Task] {task_description}")
     await publish(f"[Scope] {scope_dir}")
+    await update_status("running")
 
     graph = build_graph()
 
@@ -52,6 +69,7 @@ async def main() -> None:
             await publish(log_line)
 
     await publish(f"[AeroSwarm Agent {agent_id}] Task complete.")
+    await update_status("idle")
     await r.aclose()
 
 

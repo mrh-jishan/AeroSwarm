@@ -8,9 +8,14 @@
 
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useState } from "react";
 import dynamic from "next/dynamic";
 import type { AgentSummary } from "@/lib/types";
+import {
+  approveMergeRequest,
+  createMergeRequest,
+  rejectMergeRequest,
+} from "@/lib/api";
 
 // Dynamically import Terminal to avoid SSR issues
 const AgentTerminal = dynamic(() => import("./AgentTerminal"), { ssr: false });
@@ -29,6 +34,46 @@ interface AgentCardProps {
 
 export function AgentCard({ agent }: AgentCardProps) {
   const dotColor = STATUS_COLORS[agent.status] ?? "bg-gray-400";
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<"merge" | "reject" | null>(null);
+
+  async function handleMerge() {
+    setActionLoading("merge");
+    setActionError(null);
+
+    try {
+      const mr = await createMergeRequest(agent.taskId);
+      if (!mr.ready_to_merge) {
+        const failedChecks = mr.checks.filter((check) => check.status === "failed");
+        const details = failedChecks.length > 0
+          ? failedChecks.map((check) => {
+              const output = check.output ? `\n${check.output}` : "";
+              return `${check.label}: ${check.summary}${output}`;
+            }).join("\n\n")
+          : "Preflight checks did not pass.";
+        throw new Error(details);
+      }
+      await approveMergeRequest(mr.merge_request_id, "dashboard-user");
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleReject() {
+    setActionLoading("reject");
+    setActionError(null);
+
+    try {
+      const mr = await createMergeRequest(agent.taskId);
+      await rejectMergeRequest(mr.merge_request_id, "dashboard-user");
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setActionLoading(null);
+    }
+  }
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden flex flex-col shadow-xl">
@@ -68,15 +113,28 @@ export function AgentCard({ agent }: AgentCardProps) {
 
         {agent.status === "idle" && (
           <div className="flex gap-2">
-            <button className="px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-white text-xs">
-              Merge
+            <button
+              onClick={handleMerge}
+              disabled={actionLoading !== null}
+              className="px-2 py-1 bg-green-700 hover:bg-green-600 disabled:bg-green-900 rounded text-white text-xs"
+            >
+              {actionLoading === "merge" ? "Merging..." : "Merge"}
             </button>
-            <button className="px-2 py-1 bg-red-900 hover:bg-red-800 rounded text-white text-xs">
-              Reject
+            <button
+              onClick={handleReject}
+              disabled={actionLoading !== null}
+              className="px-2 py-1 bg-red-900 hover:bg-red-800 disabled:bg-red-950 rounded text-white text-xs"
+            >
+              {actionLoading === "reject" ? "Rejecting..." : "Reject"}
             </button>
           </div>
         )}
       </div>
+      {actionError && (
+        <div className="px-4 py-2 border-t border-red-950 bg-red-950/40 text-red-300 text-xs">
+          {actionError}
+        </div>
+      )}
     </div>
   );
 }

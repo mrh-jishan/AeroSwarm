@@ -9,6 +9,7 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { getApiToken } from "@/lib/api";
 
 const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
 
@@ -37,7 +38,13 @@ export default function AgentTerminal({ agentId }: AgentTerminalProps) {
     fitAddon.fit();
     termRef.current = term;
 
-    const ws = new WebSocket(`${WS_BASE}/ws/agents/${agentId}/logs`);
+    const token = getApiToken();
+    const url = new URL(`${WS_BASE}/ws/agents/${agentId}/logs`);
+    if (token) {
+      url.searchParams.set("token", token);
+    }
+
+    const ws = new WebSocket(url.toString());
     wsRef.current = ws;
 
     ws.onmessage = (e) => {
