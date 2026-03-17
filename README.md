@@ -87,6 +87,16 @@ AeroSwarm/
 
 See [AeroSwarm PRD.md](AeroSwarm%20PRD.md) for the full product requirements and [docs/INITIAL_INVESTIGATION.md](docs/INITIAL_INVESTIGATION.md) for the technical investigation.
 
+## Shared AI Context
+
+To keep context consistent across computers, this repo now includes:
+
+- `CLAUDE.md` — project context and working rules for Claude-based agents.
+- `.github/copilot-instructions.md` — repo-specific instructions for VS Code Copilot.
+- `.vscode/settings.json` — shared VS Code workspace settings.
+- `.vscode/extensions.json` — recommended extensions for this project.
+- `.vscode/tasks.json` — common run tasks for backend/frontend/infra.
+
 ---
 
 ## Security
