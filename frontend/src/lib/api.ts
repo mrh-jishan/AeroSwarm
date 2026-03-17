@@ -4,6 +4,7 @@ import type {
   AuthResponse,
   MergeRequestResponse,
   PasswordResetRequestResponse,
+  ProviderConnection,
   SessionResponse,
   User,
 } from "./types";
@@ -60,6 +61,7 @@ async function requestJson<T>(path: string, init: RequestInit = {}, retryOnAuth 
 export async function createSession(payload: {
   repoUrl: string;
   prompt: string;
+  providerConnectionId?: string;
   repoAccessToken?: string;
   repoUsername?: string;
 }): Promise<SessionResponse> {
@@ -68,10 +70,30 @@ export async function createSession(payload: {
     body: JSON.stringify({
       repo_url: payload.repoUrl,
       prompt: payload.prompt,
+      provider_connection_id: payload.providerConnectionId || undefined,
       repo_access_token: payload.repoAccessToken || undefined,
       repo_username: payload.repoUsername || undefined,
     }),
   });
+}
+
+export async function listProviderConnections(): Promise<ProviderConnection[]> {
+  return requestJson<ProviderConnection[]>("/api/vcs/connections", { method: "GET" });
+}
+
+export async function connectGitHub(payload: {
+  accessToken: string;
+}): Promise<ProviderConnection> {
+  return requestJson<ProviderConnection>("/api/vcs/github/connect", {
+    method: "POST",
+    body: JSON.stringify({ access_token: payload.accessToken }),
+  });
+}
+
+export function getGitHubOAuthStartUrl(redirectPath = "/"): string {
+  const url = new URL(`${API_BASE}/api/vcs/github/oauth/start`);
+  url.searchParams.set("redirect_path", redirectPath);
+  return url.toString();
 }
 
 export async function register(payload: {

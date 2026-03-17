@@ -13,6 +13,10 @@ export interface AgentSummary {
 export interface SessionResponse {
   id: string;
   repo_url: string;
+  vcs_provider?: string | null;
+  repo_owner?: string | null;
+  repo_name?: string | null;
+  base_branch?: string | null;
   prompt: string;
   status: string;
   task_count: number;
@@ -39,6 +43,8 @@ export interface MergeRequestResponse {
   ready_to_merge: boolean;
   lint_passed: boolean;
   tests_passed: boolean;
+  provider_pr_number?: number | null;
+  provider_pr_url?: string | null;
   checks: PreflightCheck[];
 }
 
@@ -52,4 +58,10 @@ export interface AuthResponse {
 export interface PasswordResetRequestResponse {
   accepted: boolean;
   reset_token?: string | null;
+}
+
+export interface ProviderConnection {
+  id: string;
+  provider: string;
+  account_login: string;
 }

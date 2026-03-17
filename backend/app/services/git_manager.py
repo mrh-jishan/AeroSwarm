@@ -59,22 +59,47 @@ class GitManagerService:
             if Path(worktree_path).exists():
                 shutil.rmtree(worktree_path, ignore_errors=True)
 
-    def get_diff(self, repo_path: str, branch_name: str) -> str:
+    def get_diff(self, repo_path: str, base_branch: str, branch_name: str) -> str:
         """Return the unified diff between the agent branch and main."""
         repo = git.Repo(repo_path)
-        return repo.git.diff("main", branch_name)
+        return repo.git.diff(base_branch, branch_name)
 
-    def merge_branch(self, repo_path: str, branch_name: str, approved_by: str) -> None:
+    def merge_branch(
+        self,
+        repo_path: str,
+        base_branch: str,
+        branch_name: str,
+        approved_by: str,
+    ) -> None:
         """
         Merge an agent branch into main (no fast-forward, HITL-approved).
         NEVER called without explicit human approval token.
         """
         repo = git.Repo(repo_path)
-        repo.git.checkout("main")
+        repo.git.checkout(base_branch)
         repo.git.merge(
             "--no-ff",
             branch_name,
             "-m",
             f"feat: merge {branch_name} — approved by {approved_by}",
         )
-        logger.info("Merged %s into main (approved by %s)", branch_name, approved_by)
+        logger.info("Merged %s into %s (approved by %s)", branch_name, base_branch, approved_by)
+
+    def push_branch(
+        self,
+        repo_path: str,
+        remote_url: str,
+        branch_name: str,
+    ) -> None:
+        """Push a session branch to the authenticated origin remote."""
+        repo = git.Repo(repo_path)
+        origin = repo.remotes.origin
+        original_urls = list(origin.urls)
+        original_url = original_urls[0] if original_urls else None
+
+        try:
+            origin.set_url(remote_url)
+            repo.git.push("--set-upstream", "origin", branch_name)
+        finally:
+            if original_url is not None:
+                origin.set_url(original_url)

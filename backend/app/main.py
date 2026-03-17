@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import agents, auth, merge_requests, sessions
+from app.api.routes import agents, auth, merge_requests, sessions, vcs
 from app.core.config import settings
 from app.models import base  # noqa: F401 — ensure models are imported before create_all
 
@@ -52,6 +52,7 @@ app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(merge_requests.router, prefix="/api/merge-requests", tags=["merge"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(vcs.router, prefix="/api/vcs", tags=["vcs"])
 
 
 @app.get("/health")

@@ -18,7 +18,15 @@ class Session(Base):
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
     )
+    provider_connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_connections.id", ondelete="SET NULL"),
+    )
     repo_url: Mapped[str] = mapped_column(Text, nullable=False)
+    vcs_provider: Mapped[str | None] = mapped_column(String(20))
+    repo_owner: Mapped[str | None] = mapped_column(String(255))
+    repo_name: Mapped[str | None] = mapped_column(String(255))
+    base_branch: Mapped[str | None] = mapped_column(String(255))
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     # planning | running | merging | done | failed
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="planning")
@@ -27,6 +35,10 @@ class Session(Base):
     tasks: Mapped[list["Task"]] = relationship("Task", back_populates="session", cascade="all, delete-orphan")
     audit_events: Mapped[list["AuditEvent"]] = relationship("AuditEvent", back_populates="session")
     owner: Mapped["User | None"] = relationship("User", back_populates="sessions")
+    provider_connection: Mapped["ProviderConnection | None"] = relationship(
+        "ProviderConnection",
+        back_populates="sessions",
+    )
 
 
 class Task(Base):
@@ -72,6 +84,8 @@ class MergeRequest(Base):
     task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tasks.id"))
     lint_passed: Mapped[bool | None] = mapped_column(Boolean)
     tests_passed: Mapped[bool | None] = mapped_column(Boolean)
+    provider_pr_number: Mapped[int | None] = mapped_column(Integer)
+    provider_pr_url: Mapped[str | None] = mapped_column(Text)
     approved_by: Mapped[str | None] = mapped_column(Text)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     merged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -117,6 +131,10 @@ class User(Base):
 
     sessions: Mapped[list["Session"]] = relationship("Session", back_populates="owner")
     auth_sessions: Mapped[list["AuthSession"]] = relationship("AuthSession", back_populates="user")
+    provider_connections: Mapped[list["ProviderConnection"]] = relationship(
+        "ProviderConnection",
+        back_populates="user",
+    )
     password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
         "PasswordResetToken",
         back_populates="user",
@@ -157,3 +175,21 @@ class PasswordResetToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="password_reset_tokens")
+
+
+class ProviderConnection(Base):
+    __tablename__ = "provider_connections"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    account_login: Mapped[str] = mapped_column(String(255), nullable=False)
+    encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship("User", back_populates="provider_connections")
+    sessions: Mapped[list["Session"]] = relationship("Session", back_populates="provider_connection")

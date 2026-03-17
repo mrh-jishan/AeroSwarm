@@ -10,22 +10,29 @@ from sqlalchemy.future import select
 
 from app.core.database import get_db
 from app.core.security import AuthContext, require_user_context
-from app.models.base import Agent, AuditEvent, Session, Task
+from app.models.base import Agent, AuditEvent, ProviderConnection, Session, Task
 from app.services.agent_launcher import AgentLauncherService
 from app.services.audit import AuditService
+from app.services.crypto import CredentialCryptoService
+from app.services.github_provider import GitHubProviderService
 from app.services.orchestrator import OrchestratorService
 from app.services.repo_manager import RepoManagerService
+from app.services.vcs import RepoIdentity, VcsService
 
 router = APIRouter(dependencies=[Depends(require_user_context)])
 orchestrator = OrchestratorService()
 launcher = AgentLauncherService()
 audit = AuditService()
 repo_mgr = RepoManagerService()
+crypto = CredentialCryptoService()
+github = GitHubProviderService()
+vcs = VcsService()
 
 
 class CreateSessionRequest(BaseModel):
     repo_url: str
     prompt: str
+    provider_connection_id: uuid.UUID | None = None
     repo_access_token: str | None = None
     repo_username: str | None = None
 
@@ -33,6 +40,10 @@ class CreateSessionRequest(BaseModel):
 class SessionResponse(BaseModel):
     id: uuid.UUID
     repo_url: str
+    vcs_provider: str | None = None
+    repo_owner: str | None = None
+    repo_name: str | None = None
+    base_branch: str | None = None
     prompt: str
     status: str
     task_count: int
@@ -57,6 +68,56 @@ class AuditEventResponse(BaseModel):
     created_at: str
 
 
+async def _resolve_provider_connection(
+    *,
+    payload: CreateSessionRequest,
+    auth: AuthContext,
+    db: AsyncSession,
+    identity: RepoIdentity,
+) -> ProviderConnection | None:
+    connection: ProviderConnection | None = None
+
+    if payload.provider_connection_id is not None:
+        result = await db.execute(
+            select(ProviderConnection).where(
+                ProviderConnection.id == payload.provider_connection_id,
+                ProviderConnection.user_id == auth.user_id,
+            )
+        )
+        connection = result.scalar_one_or_none()
+        if connection is None:
+            raise HTTPException(status_code=404, detail="Provider connection not found")
+
+    if payload.repo_access_token and identity.provider == "github":
+        try:
+            gh_user = await github.get_authenticated_user(payload.repo_access_token)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        existing_result = await db.execute(
+            select(ProviderConnection).where(
+                ProviderConnection.user_id == auth.user_id,
+                ProviderConnection.provider == "github",
+                ProviderConnection.account_login == gh_user.login,
+            )
+        )
+        connection = existing_result.scalar_one_or_none()
+        encrypted_token = crypto.encrypt(payload.repo_access_token)
+        if connection is None:
+            connection = ProviderConnection(
+                user_id=auth.user_id,
+                provider="github",
+                account_login=gh_user.login,
+                encrypted_access_token=encrypted_token,
+            )
+            db.add(connection)
+            await db.flush()
+        else:
+            connection.encrypted_access_token = encrypted_token
+
+    return connection
+
+
 @router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     payload: CreateSessionRequest,
@@ -74,9 +135,28 @@ async def create_session(
     if not payload.repo_url.startswith(("https://", "http://", "git@")):
         raise HTTPException(status_code=400, detail="Invalid repo_url scheme")
 
+    identity = vcs.parse_repo_identity(payload.repo_url)
+    provider_connection = await _resolve_provider_connection(
+        payload=payload,
+        auth=auth,
+        db=db,
+        identity=identity,
+    )
+
+    repo_access_token = payload.repo_access_token
+    repo_username = payload.repo_username
+    if repo_access_token is None and provider_connection is not None:
+        repo_access_token = crypto.decrypt(provider_connection.encrypted_access_token)
+        if provider_connection.provider == "github":
+            repo_username = "x-access-token"
+
     session = Session(
         owner_user_id=auth.user_id,
+        provider_connection_id=provider_connection.id if provider_connection else None,
         repo_url=payload.repo_url,
+        vcs_provider=identity.provider,
+        repo_owner=identity.owner,
+        repo_name=identity.name,
         prompt=payload.prompt,
         status="planning",
     )
@@ -94,19 +174,38 @@ async def create_session(
         repo_mgr.clone_repo(
             session.id,
             payload.repo_url,
-            repo_access_token=payload.repo_access_token,
-            repo_username=payload.repo_username,
+            repo_access_token=repo_access_token,
+            repo_username=repo_username,
         )
     except Exception as exc:
         await db.rollback()
         repo_mgr.cleanup_session_repo(session.id)
         raise HTTPException(status_code=502, detail="Failed to clone repository") from exc
+
+    session.base_branch = repo_mgr.get_default_branch(session.id)
+    if (
+        session.vcs_provider == "github"
+        and session.repo_owner
+        and session.repo_name
+        and repo_access_token
+    ):
+        try:
+            repo_info = await github.get_repo(session.repo_owner, session.repo_name, repo_access_token)
+            session.base_branch = repo_info.default_branch
+        except ValueError:
+            pass
     await audit.record(
         db,
         "repo.cloned",
         auth.actor,
         session_id=session.id,
-        details={"repo_url": payload.repo_url},
+        details={
+            "repo_url": payload.repo_url,
+            "provider": session.vcs_provider,
+            "repo_owner": session.repo_owner,
+            "repo_name": session.repo_name,
+            "base_branch": session.base_branch,
+        },
     )
 
     # Decompose prompt into sub-tasks
@@ -156,6 +255,10 @@ async def create_session(
     return SessionResponse(
         id=session.id,
         repo_url=session.repo_url,
+        vcs_provider=session.vcs_provider,
+        repo_owner=session.repo_owner,
+        repo_name=session.repo_name,
+        base_branch=session.base_branch,
         prompt=session.prompt,
         status=session.status,
         task_count=len(tasks),
@@ -189,6 +292,10 @@ async def get_session(
     return SessionResponse(
         id=session.id,
         repo_url=session.repo_url,
+        vcs_provider=session.vcs_provider,
+        repo_owner=session.repo_owner,
+        repo_name=session.repo_name,
+        base_branch=session.base_branch,
         prompt=session.prompt,
         status=session.status,
         task_count=len(tasks),

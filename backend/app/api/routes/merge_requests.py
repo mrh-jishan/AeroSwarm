@@ -13,10 +13,12 @@ from sqlalchemy.future import select
 
 from app.core.database import get_db
 from app.core.security import AuthContext, require_user_context
-from app.models.base import Agent, MergeRequest, Session, Task
+from app.models.base import Agent, MergeRequest, ProviderConnection, Session, Task
 from app.services.audit import AuditService
+from app.services.crypto import CredentialCryptoService
 from app.services.docker_manager import DockerManagerService
 from app.services.git_manager import GitManagerService
+from app.services.github_provider import GitHubProviderService
 from app.services.janitor import JanitorService
 from app.services.repo_manager import RepoManagerService
 
@@ -26,6 +28,8 @@ git_mgr = GitManagerService()
 janitor = JanitorService()
 repo_mgr = RepoManagerService()
 audit = AuditService()
+crypto = CredentialCryptoService()
+github = GitHubProviderService()
 
 
 class CreateMergeRequestBody(BaseModel):
@@ -47,7 +51,99 @@ class MergeRequestResponse(BaseModel):
     ready_to_merge: bool
     lint_passed: bool
     tests_passed: bool
+    provider_pr_number: int | None = None
+    provider_pr_url: str | None = None
     checks: list[PreflightCheckResponse]
+
+
+async def _resolve_provider_connection(
+    session: Session,
+    db: AsyncSession,
+) -> ProviderConnection | None:
+    if session.provider_connection_id is None:
+        return None
+
+    result = await db.execute(
+        select(ProviderConnection).where(ProviderConnection.id == session.provider_connection_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _sync_github_pull_request(
+    *,
+    session: Session,
+    task: Task,
+    mr: MergeRequest,
+    checks: list[PreflightCheckResponse],
+    access_token: str,
+    db: AsyncSession,
+) -> None:
+    if not session.repo_owner or not session.repo_name or not session.base_branch or not task.branch_name:
+        raise HTTPException(status_code=400, detail="Session is missing GitHub repository metadata")
+
+    repo_path = repo_mgr.get_repo_path(session.id)
+    authenticated_url = repo_mgr.build_authenticated_repo_url(
+        session.repo_url,
+        access_token,
+        "x-access-token",
+    )
+    try:
+        git_mgr.push_branch(str(repo_path), authenticated_url, task.branch_name)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to push branch to GitHub: {exc}") from exc
+
+    comment_lines = [
+        "AeroSwarm preflight results:",
+        "",
+    ]
+    for check in checks:
+        status_icon = {
+            "passed": "PASS",
+            "failed": "FAIL",
+            "skipped": "SKIP",
+        }.get(check.status, check.status.upper())
+        comment_lines.append(f"- [{status_icon}] {check.label}: {check.summary}")
+    comment_body = "\n".join(comment_lines)
+
+    try:
+        pr = await github.find_open_pull_request(
+            owner=session.repo_owner,
+            name=session.repo_name,
+            head=f"{session.repo_owner}:{task.branch_name}",
+            base=session.base_branch,
+            access_token=access_token,
+        )
+        if pr is None:
+            pr = await github.create_pull_request(
+                owner=session.repo_owner,
+                name=session.repo_name,
+                title=task.title,
+                body=task.description or f"AeroSwarm task: {task.title}",
+                head=task.branch_name,
+                base=session.base_branch,
+                access_token=access_token,
+            )
+
+        await github.comment_on_pull_request(
+            owner=session.repo_owner,
+            name=session.repo_name,
+            issue_number=pr.number,
+            body=comment_body,
+            access_token=access_token,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    mr.provider_pr_number = pr.number
+    mr.provider_pr_url = pr.html_url
+    await audit.record(
+        db,
+        "merge.github_pr.synced",
+        "system",
+        session_id=session.id,
+        task_id=task.id,
+        details={"pr_number": pr.number, "pr_url": pr.html_url, "branch": task.branch_name},
+    )
 
 
 @router.post("/", response_model=MergeRequestResponse, status_code=status.HTTP_201_CREATED)
@@ -72,6 +168,10 @@ async def create_merge_request(
     agent = agent_result.scalar_one_or_none()
     if agent is None or agent.worktree_path is None:
         raise HTTPException(status_code=400, detail="Task has no agent worktree")
+    session_result = await db.execute(select(Session).where(Session.id == task.session_id))
+    session = session_result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     existing_result = await db.execute(select(MergeRequest).where(MergeRequest.task_id == task.id))
     mr = existing_result.scalar_one_or_none()
@@ -102,6 +202,29 @@ async def create_merge_request(
         },
     )
 
+    provider_connection = await _resolve_provider_connection(session, db)
+    if session.vcs_provider == "github" and provider_connection is not None:
+        access_token = crypto.decrypt(provider_connection.encrypted_access_token)
+        checks = [
+            PreflightCheckResponse(
+                category=check.category,
+                label=check.label,
+                status=check.status,
+                command=check.command,
+                summary=check.summary,
+                output=check.output,
+            )
+            for check in report.checks
+        ]
+        await _sync_github_pull_request(
+            session=session,
+            task=task,
+            mr=mr,
+            checks=checks,
+            access_token=access_token,
+            db=db,
+        )
+
     await db.commit()
     await db.refresh(mr)
 
@@ -111,6 +234,8 @@ async def create_merge_request(
         ready_to_merge=report.ready_to_merge,
         lint_passed=report.lint_passed,
         tests_passed=report.tests_passed,
+        provider_pr_number=mr.provider_pr_number,
+        provider_pr_url=mr.provider_pr_url,
         checks=[
             PreflightCheckResponse(
                 category=check.category,
@@ -146,9 +271,14 @@ async def get_diff(
     task = task_result.scalar_one_or_none()
     if task is None or task.branch_name is None:
         raise HTTPException(status_code=400, detail="Task has no branch")
+    session_result = await db.execute(select(Session).where(Session.id == task.session_id))
+    session = session_result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     repo_path = repo_mgr.get_repo_path(task.session_id)
-    diff = git_mgr.get_diff(str(repo_path), task.branch_name)
+    base_branch = session.base_branch or "main"
+    diff = git_mgr.get_diff(str(repo_path), base_branch, task.branch_name)
     return {"branch": task.branch_name, "diff": diff}
 
 
@@ -191,14 +321,36 @@ async def approve_merge(
     task = task_result.scalar_one_or_none()
     agent_result = await db.execute(select(Agent).where(Agent.task_id == mr.task_id))
     agent = agent_result.scalar_one_or_none()
+    session_result = await db.execute(select(Session).where(Session.id == task.session_id)) if task else None
+    session = session_result.scalar_one_or_none() if session_result else None
 
-    if task is None or task.branch_name is None:
+    if task is None or task.branch_name is None or session is None:
         raise HTTPException(status_code=400, detail="Task has no branch")
-
     repo_path = repo_mgr.get_repo_path(task.session_id)
+    base_branch = session.base_branch or "main"
 
-    # HITL merge — only possible with explicit human approval
-    git_mgr.merge_branch(str(repo_path), task.branch_name, auth.actor)
+    provider_connection = await _resolve_provider_connection(session, db)
+    if (
+        session.vcs_provider == "github"
+        and provider_connection is not None
+        and mr.provider_pr_number is not None
+        and session.repo_owner
+        and session.repo_name
+    ):
+        access_token = crypto.decrypt(provider_connection.encrypted_access_token)
+        try:
+            await github.merge_pull_request(
+                owner=session.repo_owner,
+                name=session.repo_name,
+                number=mr.provider_pr_number,
+                commit_title=f"AeroSwarm: {task.title}",
+                access_token=access_token,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    else:
+        # HITL merge — only possible with explicit human approval
+        git_mgr.merge_branch(str(repo_path), base_branch, task.branch_name, auth.actor)
 
     # Cleanup
     if agent and agent.container_id:
@@ -225,7 +377,12 @@ async def approve_merge(
     )
 
     await db.commit()
-    return {"status": "merged", "branch": task.branch_name}
+    return {
+        "status": "merged",
+        "branch": task.branch_name,
+        "provider_pr_number": mr.provider_pr_number,
+        "provider_pr_url": mr.provider_pr_url,
+    }
 
 
 @router.post("/{mr_id}/reject")

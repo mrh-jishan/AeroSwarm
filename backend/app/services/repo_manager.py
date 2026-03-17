@@ -35,16 +35,24 @@ class RepoManagerService:
         if repo_path.exists():
             shutil.rmtree(repo_path)
 
-        clone_url = self._build_clone_url(repo_url, repo_access_token, repo_username)
+        clone_url = self.build_authenticated_repo_url(repo_url, repo_access_token, repo_username)
         git.Repo.clone_from(clone_url, repo_path)
         return str(repo_path)
+
+    def get_default_branch(self, session_id: uuid.UUID) -> str | None:
+        repo_path = self.get_repo_path(session_id)
+        repo = git.Repo(repo_path)
+        try:
+            return repo.active_branch.name
+        except TypeError:
+            return None
 
     def cleanup_session_repo(self, session_id: uuid.UUID) -> None:
         session_root = self.get_session_root(session_id)
         if session_root.exists():
             shutil.rmtree(session_root, ignore_errors=True)
 
-    def _build_clone_url(
+    def build_authenticated_repo_url(
         self,
         repo_url: str,
         repo_access_token: str | None,

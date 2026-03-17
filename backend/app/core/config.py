@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     COOKIE_SAMESITE: str = "lax"
     RUN_MIGRATIONS_ON_STARTUP: bool = False
     EXPOSE_DEV_TOKENS: bool = False
+    FRONTEND_URL: str = "http://localhost:3000"
+    GITHUB_OAUTH_CLIENT_ID: str = ""
+    GITHUB_OAUTH_CLIENT_SECRET: str = ""
+    GITHUB_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/vcs/github/oauth/callback"
+    GITHUB_OAUTH_STATE_TTL_SECONDS: int = 600
+    GITHUB_WEBHOOK_SECRET: str = ""
 
     # ── LLM ───────────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
