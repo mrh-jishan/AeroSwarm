@@ -187,8 +187,10 @@ class ProviderConnection(Base):
         nullable=False,
     )
     provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    auth_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="token")
     account_login: Mapped[str] = mapped_column(String(255), nullable=False)
-    encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    installation_id: Mapped[int | None] = mapped_column(Integer)
+    encrypted_access_token: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="provider_connections")

@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import {
   connectGitHub,
   createSession,
+  getGitHubAppInstallStartUrl,
   getGitHubOAuthStartUrl,
   listProviderConnections,
 } from "@/lib/api";
@@ -16,6 +17,13 @@ import type { ProviderConnection } from "@/lib/types";
 interface NewSessionFormProps {
   onSessionCreated?: (sessionId: string) => void;
   currentUserEmail: string;
+}
+
+function describeConnection(connection: ProviderConnection) {
+  if (connection.auth_mode === "github_app") {
+    return `${connection.provider}: ${connection.account_login} (GitHub App #${connection.installation_id ?? "?"})`;
+  }
+  return `${connection.provider}: ${connection.account_login} (${connection.auth_mode})`;
 }
 
 export function NewSessionForm({ onSessionCreated, currentUserEmail }: NewSessionFormProps) {
@@ -52,22 +60,29 @@ export function NewSessionForm({ onSessionCreated, currentUserEmail }: NewSessio
 
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      const oauthStatus = params.get("github_oauth");
+      const githubOauthStatus = params.get("github_oauth");
+      const githubAppStatus = params.get("github_app");
       const account = params.get("account");
+      const installationId = params.get("installation_id");
       const message = params.get("message");
 
-      if (oauthStatus === "connected") {
-        setResult(account ? `Connected GitHub account: ${account}` : "GitHub connection added.");
+      if (githubOauthStatus === "connected") {
+        setResult(account ? `Connected GitHub account: ${account}` : "GitHub OAuth connection added.");
+      } else if (githubAppStatus === "connected") {
+        setResult(
+          account
+            ? `Connected GitHub App installation for ${account}${installationId ? ` (#${installationId})` : ""}`
+            : "GitHub App installation added."
+        );
+      } else if (githubOauthStatus === "error" || githubAppStatus === "error") {
+        setError(message || "GitHub connection failed");
+      }
+
+      if (githubOauthStatus || githubAppStatus || message || account || installationId) {
         params.delete("github_oauth");
+        params.delete("github_app");
         params.delete("account");
-        params.delete("message");
-        const nextQuery = params.toString();
-        const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
-        window.history.replaceState({}, "", nextUrl);
-      } else if (oauthStatus === "error") {
-        setError(message || "GitHub OAuth failed");
-        params.delete("github_oauth");
-        params.delete("account");
+        params.delete("installation_id");
         params.delete("message");
         const nextQuery = params.toString();
         const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
@@ -102,6 +117,10 @@ export function NewSessionForm({ onSessionCreated, currentUserEmail }: NewSessio
 
   function handleConnectGitHubOAuth() {
     window.location.href = getGitHubOAuthStartUrl(window.location.pathname);
+  }
+
+  function handleInstallGitHubApp() {
+    window.location.href = getGitHubAppInstallStartUrl(window.location.pathname);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -171,7 +190,7 @@ export function NewSessionForm({ onSessionCreated, currentUserEmail }: NewSessio
             <option value="">None</option>
             {providerConnections.map((connection) => (
               <option key={connection.id} value={connection.id}>
-                {connection.provider}: {connection.account_login}
+                {describeConnection(connection)}
               </option>
             ))}
           </select>
@@ -179,29 +198,38 @@ export function NewSessionForm({ onSessionCreated, currentUserEmail }: NewSessio
 
         <div className="space-y-2">
           <label className="block text-xs text-gray-400 mb-1">GitHub Connection</label>
-          <button
-            type="button"
-            onClick={handleConnectGitHubOAuth}
-            className="w-full px-3 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg text-sm"
-          >
-            Connect With GitHub OAuth
-          </button>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={githubAccessToken}
-              onChange={(e) => setGitHubAccessToken(e.target.value)}
-              placeholder="Fallback PAT"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          <div className="grid grid-cols-1 gap-2">
             <button
               type="button"
-              onClick={handleConnectGitHubToken}
-              disabled={connecting || !githubAccessToken}
-              className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-900 rounded-lg text-sm"
+              onClick={handleConnectGitHubOAuth}
+              className="w-full px-3 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg text-sm"
             >
-              {connecting ? "Saving..." : "Save PAT"}
+              Connect With GitHub OAuth
             </button>
+            <button
+              type="button"
+              onClick={handleInstallGitHubApp}
+              className="w-full px-3 py-2 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-sm"
+            >
+              Install GitHub App
+            </button>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={githubAccessToken}
+                onChange={(e) => setGitHubAccessToken(e.target.value)}
+                placeholder="Fallback PAT"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="button"
+                onClick={handleConnectGitHubToken}
+                disabled={connecting || !githubAccessToken}
+                className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-900 rounded-lg text-sm"
+              >
+                {connecting ? "Saving..." : "Save PAT"}
+              </button>
+            </div>
           </div>
         </div>
 

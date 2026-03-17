@@ -16,6 +16,7 @@ from app.services.audit import AuditService
 from app.services.crypto import CredentialCryptoService
 from app.services.github_provider import GitHubProviderService
 from app.services.orchestrator import OrchestratorService
+from app.services.provider_connections import ProviderConnectionService
 from app.services.repo_manager import RepoManagerService
 from app.services.vcs import RepoIdentity, VcsService
 
@@ -27,6 +28,7 @@ repo_mgr = RepoManagerService()
 crypto = CredentialCryptoService()
 github = GitHubProviderService()
 vcs = VcsService()
+provider_connections = ProviderConnectionService()
 
 
 class CreateSessionRequest(BaseModel):
@@ -107,12 +109,15 @@ async def _resolve_provider_connection(
             connection = ProviderConnection(
                 user_id=auth.user_id,
                 provider="github",
+                auth_mode="token",
                 account_login=gh_user.login,
                 encrypted_access_token=encrypted_token,
             )
             db.add(connection)
             await db.flush()
         else:
+            connection.auth_mode = "token"
+            connection.installation_id = None
             connection.encrypted_access_token = encrypted_token
 
     return connection
@@ -146,9 +151,11 @@ async def create_session(
     repo_access_token = payload.repo_access_token
     repo_username = payload.repo_username
     if repo_access_token is None and provider_connection is not None:
-        repo_access_token = crypto.decrypt(provider_connection.encrypted_access_token)
-        if provider_connection.provider == "github":
-            repo_username = "x-access-token"
+        try:
+            repo_access_token = await provider_connections.resolve_access_token(provider_connection)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        repo_username = provider_connections.require_token_username(provider_connection)
 
     session = Session(
         owner_user_id=auth.user_id,

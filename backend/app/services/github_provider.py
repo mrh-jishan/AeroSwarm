@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 from urllib.parse import urlencode
 
 import httpx
+from jose import jwt
 
 from app.core.config import settings
 
@@ -32,10 +34,17 @@ class GitHubPullRequest:
     state: str
 
 
+@dataclass(slots=True)
+class GitHubInstallation:
+    id: int
+    account_login: str
+
+
 class GitHubProviderService:
     BASE_URL = "https://api.github.com"
     AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
     OAUTH_TOKEN_URL = "https://github.com/login/oauth/access_token"
+    APP_INSTALL_URL = "https://github.com/apps/{slug}/installations/new"
 
     def build_oauth_authorize_url(self, state: str) -> str:
         if not settings.GITHUB_OAUTH_CLIENT_ID:
@@ -77,6 +86,30 @@ class GitHubProviderService:
             raise ValueError(f"GitHub OAuth error: {data.get('error_description', 'missing access token')}")
         return str(access_token)
 
+    def build_app_install_url(self, state: str) -> str:
+        if not settings.GITHUB_APP_SLUG:
+            raise ValueError("GitHub App is not configured")
+        query = urlencode({"state": state})
+        return f"{self.APP_INSTALL_URL.format(slug=settings.GITHUB_APP_SLUG)}?{query}"
+
+    async def get_installation(self, installation_id: int) -> GitHubInstallation:
+        data = await self._request_as_app("GET", f"/app/installations/{installation_id}")
+        account = data.get("account") or {}
+        return GitHubInstallation(
+            id=int(data["id"]),
+            account_login=str(account.get("login", "")),
+        )
+
+    async def create_installation_access_token(self, installation_id: int) -> str:
+        data = await self._request_as_app(
+            "POST",
+            f"/app/installations/{installation_id}/access_tokens",
+        )
+        token = data.get("token")
+        if not token:
+            raise ValueError("GitHub App installation token response was missing a token")
+        return str(token)
+
     def verify_webhook_signature(self, payload: bytes, signature_header: str | None) -> bool:
         secret = settings.GITHUB_WEBHOOK_SECRET
         if not secret:
@@ -87,6 +120,19 @@ class GitHubProviderService:
         digest = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
         expected = f"sha256={digest}"
         return hmac.compare_digest(expected, signature_header)
+
+    def _create_app_jwt(self) -> str:
+        if not settings.GITHUB_APP_ID or not settings.GITHUB_APP_PRIVATE_KEY:
+            raise ValueError("GitHub App is not configured")
+
+        now = datetime.now(timezone.utc)
+        payload = {
+            "iat": int((now - timedelta(seconds=30)).timestamp()),
+            "exp": int((now + timedelta(minutes=9)).timestamp()),
+            "iss": settings.GITHUB_APP_ID,
+        }
+        private_key = settings.GITHUB_APP_PRIVATE_KEY.replace("\\n", "\n")
+        return jwt.encode(payload, private_key, algorithm="RS256")
 
     async def get_authenticated_user(self, access_token: str) -> GitHubUser:
         data = await self._request("GET", "/user", access_token)
@@ -219,5 +265,38 @@ class GitHubProviderService:
             except ValueError:
                 pass
             raise ValueError(f"GitHub API error: {message}")
+
+        return response.json()
+
+    async def _request_as_app(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, str] | None = None,
+        json: dict[str, object] | None = None,
+    ) -> dict | list:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {self._create_app_jwt()}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        async with httpx.AsyncClient(base_url=self.BASE_URL, timeout=20.0) as client:
+            response = await client.request(
+                method,
+                path,
+                headers=headers,
+                params=params,
+                json=json,
+            )
+
+        if response.status_code >= 400:
+            message = response.text
+            try:
+                payload = response.json()
+                message = str(payload.get("message", message))
+            except ValueError:
+                pass
+            raise ValueError(f"GitHub App API error: {message}")
 
         return response.json()

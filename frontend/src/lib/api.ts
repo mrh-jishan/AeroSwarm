@@ -96,6 +96,12 @@ export function getGitHubOAuthStartUrl(redirectPath = "/"): string {
   return url.toString();
 }
 
+export function getGitHubAppInstallStartUrl(redirectPath = "/"): string {
+  const url = new URL(`${API_BASE}/api/vcs/github-app/install/start`);
+  url.searchParams.set("redirect_path", redirectPath);
+  return url.toString();
+}
+
 export async function register(payload: {
   email: string;
   password: string;

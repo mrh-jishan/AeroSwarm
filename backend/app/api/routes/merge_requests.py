@@ -15,11 +15,11 @@ from app.core.database import get_db
 from app.core.security import AuthContext, require_user_context
 from app.models.base import Agent, MergeRequest, ProviderConnection, Session, Task
 from app.services.audit import AuditService
-from app.services.crypto import CredentialCryptoService
 from app.services.docker_manager import DockerManagerService
 from app.services.git_manager import GitManagerService
 from app.services.github_provider import GitHubProviderService
 from app.services.janitor import JanitorService
+from app.services.provider_connections import ProviderConnectionService
 from app.services.repo_manager import RepoManagerService
 
 router = APIRouter(dependencies=[Depends(require_user_context)])
@@ -28,8 +28,8 @@ git_mgr = GitManagerService()
 janitor = JanitorService()
 repo_mgr = RepoManagerService()
 audit = AuditService()
-crypto = CredentialCryptoService()
 github = GitHubProviderService()
+provider_connections = ProviderConnectionService()
 
 
 class CreateMergeRequestBody(BaseModel):
@@ -204,7 +204,10 @@ async def create_merge_request(
 
     provider_connection = await _resolve_provider_connection(session, db)
     if session.vcs_provider == "github" and provider_connection is not None:
-        access_token = crypto.decrypt(provider_connection.encrypted_access_token)
+        try:
+            access_token = await provider_connections.resolve_access_token(provider_connection)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         checks = [
             PreflightCheckResponse(
                 category=check.category,
@@ -337,7 +340,10 @@ async def approve_merge(
         and session.repo_owner
         and session.repo_name
     ):
-        access_token = crypto.decrypt(provider_connection.encrypted_access_token)
+        try:
+            access_token = await provider_connections.resolve_access_token(provider_connection)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             await github.merge_pull_request(
                 owner=session.repo_owner,

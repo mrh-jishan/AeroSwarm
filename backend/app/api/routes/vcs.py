@@ -40,7 +40,9 @@ class GitHubConnectRequest(BaseModel):
 class ProviderConnectionResponse(BaseModel):
     id: uuid.UUID
     provider: str
+    auth_mode: str
     account_login: str
+    installation_id: int | None = None
 
 
 def _build_frontend_redirect(path: str, params: dict[str, str] | None = None) -> str:
@@ -56,7 +58,9 @@ async def _upsert_github_connection(
     db: AsyncSession,
     user_id: uuid.UUID,
     account_login: str,
-    access_token: str,
+    auth_mode: str,
+    access_token: str | None = None,
+    installation_id: int | None = None,
 ) -> ProviderConnection:
     result = await db.execute(
         select(ProviderConnection).where(
@@ -66,18 +70,22 @@ async def _upsert_github_connection(
         )
     )
     connection = result.scalar_one_or_none()
-    encrypted_token = crypto.encrypt(access_token)
+    encrypted_token = crypto.encrypt(access_token) if access_token else None
 
     if connection is None:
         connection = ProviderConnection(
             user_id=user_id,
             provider="github",
+            auth_mode=auth_mode,
             account_login=account_login,
+            installation_id=installation_id,
             encrypted_access_token=encrypted_token,
         )
         db.add(connection)
         await db.flush()
     else:
+        connection.auth_mode = auth_mode
+        connection.installation_id = installation_id
         connection.encrypted_access_token = encrypted_token
 
     return connection
@@ -98,6 +106,7 @@ async def connect_github(
         db=db,
         user_id=auth.user_id,
         account_login=gh_user.login,
+        auth_mode="token",
         access_token=payload.access_token,
     )
 
@@ -113,7 +122,9 @@ async def connect_github(
     return ProviderConnectionResponse(
         id=connection.id,
         provider=connection.provider,
+        auth_mode=connection.auth_mode,
         account_login=connection.account_login,
+        installation_id=connection.installation_id,
     )
 
 
@@ -180,6 +191,7 @@ async def github_oauth_callback(
         db=db,
         user_id=user.id,
         account_login=gh_user.login,
+        auth_mode="oauth",
         access_token=access_token,
     )
     await audit.record(
@@ -212,10 +224,97 @@ async def list_connections(
         ProviderConnectionResponse(
             id=connection.id,
             provider=connection.provider,
+            auth_mode=connection.auth_mode,
             account_login=connection.account_login,
+            installation_id=connection.installation_id,
         )
         for connection in connections
     ]
+
+
+@router.get("/github-app/install/start")
+async def start_github_app_install(
+    redirect_path: str = "/",
+    auth: AuthContext = Depends(require_user_context),
+):
+    state = crypto.encrypt_json(
+        {
+            "user_id": str(auth.user_id),
+            "redirect_path": redirect_path if redirect_path.startswith("/") else "/",
+        }
+    )
+    try:
+        install_url = github.build_app_install_url(state)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(install_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+@router.get("/github-app/install/callback")
+async def github_app_install_callback(
+    installation_id: int | None = None,
+    setup_action: str | None = None,
+    state: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    if installation_id is None or not state:
+        return RedirectResponse(
+            _build_frontend_redirect("/", {"github_app": "error", "message": "missing install parameters"}),
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        )
+
+    try:
+        state_payload = crypto.decrypt_json(
+            state,
+            ttl=settings.GITHUB_APP_STATE_TTL_SECONDS,
+        )
+        user_id = uuid.UUID(str(state_payload["user_id"]))
+        redirect_path = str(state_payload.get("redirect_path", "/"))
+        installation = await github.get_installation(installation_id)
+    except (KeyError, ValueError) as exc:
+        return RedirectResponse(
+            _build_frontend_redirect("/", {"github_app": "error", "message": str(exc)}),
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        )
+
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        return RedirectResponse(
+            _build_frontend_redirect("/", {"github_app": "error", "message": "user not found"}),
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        )
+
+    connection = await _upsert_github_connection(
+        db=db,
+        user_id=user.id,
+        account_login=installation.account_login,
+        auth_mode="github_app",
+        installation_id=installation.id,
+    )
+    await audit.record(
+        db,
+        "vcs.github_app.connected",
+        user.email,
+        details={
+            "account_login": installation.account_login,
+            "installation_id": installation.id,
+            "setup_action": setup_action,
+        },
+    )
+    await db.commit()
+
+    return RedirectResponse(
+        _build_frontend_redirect(
+            redirect_path,
+            {
+                "github_app": "connected",
+                "account": connection.account_login,
+                "installation_id": str(connection.installation_id or ""),
+            },
+        ),
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
 
 
 @router.post("/github/webhooks")

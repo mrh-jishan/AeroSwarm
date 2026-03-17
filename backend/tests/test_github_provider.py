@@ -30,6 +30,23 @@ def test_build_oauth_authorize_url() -> None:
     assert params["state"] == ["opaque-state"]
 
 
+def test_build_app_install_url() -> None:
+    original_slug = settings.GITHUB_APP_SLUG
+    settings.GITHUB_APP_SLUG = "aeroswarm-bot"
+
+    try:
+        service = GitHubProviderService()
+        url = service.build_app_install_url("install-state")
+    finally:
+        settings.GITHUB_APP_SLUG = original_slug
+
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    assert parsed.netloc == "github.com"
+    assert parsed.path == "/apps/aeroswarm-bot/installations/new"
+    assert params["state"] == ["install-state"]
+
+
 def test_verify_webhook_signature() -> None:
     original_secret = settings.GITHUB_WEBHOOK_SECRET
     settings.GITHUB_WEBHOOK_SECRET = "webhook-secret"

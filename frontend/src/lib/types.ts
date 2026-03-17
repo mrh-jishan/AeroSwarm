@@ -63,5 +63,7 @@ export interface PasswordResetRequestResponse {
 export interface ProviderConnection {
   id: string;
   provider: string;
+  auth_mode: string;
   account_login: string;
+  installation_id?: number | null;
 }

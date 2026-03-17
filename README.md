@@ -40,6 +40,13 @@ poetry install
 poetry run alembic upgrade head
 ```
 
+Copy the backend env template before running live GitHub integrations:
+
+```bash
+cd backend
+cp .env.example .env
+```
+
 ### 3. Start the frontend
 
 ```bash
@@ -86,6 +93,8 @@ AeroSwarm/
 | 3 — Previews & Merge | 9–12 | Traefik live previews + visual 3-way merge UI + K8s deployment |
 
 See [AeroSwarm PRD.md](AeroSwarm%20PRD.md) for the full product requirements and [docs/INITIAL_INVESTIGATION.md](docs/INITIAL_INVESTIGATION.md) for the technical investigation.
+
+For live GitHub OAuth, GitHub App installation, PR sync, and webhook validation, use [docs/GITHUB_LIVE_VALIDATION.md](docs/GITHUB_LIVE_VALIDATION.md).
 
 ## Shared AI Context
 

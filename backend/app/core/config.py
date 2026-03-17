@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     GITHUB_OAUTH_CLIENT_SECRET: str = ""
     GITHUB_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/vcs/github/oauth/callback"
     GITHUB_OAUTH_STATE_TTL_SECONDS: int = 600
+    GITHUB_APP_ID: str = ""
+    GITHUB_APP_SLUG: str = ""
+    GITHUB_APP_PRIVATE_KEY: str = ""
+    GITHUB_APP_STATE_TTL_SECONDS: int = 600
     GITHUB_WEBHOOK_SECRET: str = ""
 
     # ── LLM ───────────────────────────────────────────────────────────────────
