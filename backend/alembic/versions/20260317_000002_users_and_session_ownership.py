@@ -22,12 +22,20 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("email", sa.String(length=255), nullable=False),
         sa.Column("password_hash", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("email"),
     )
 
-    op.add_column("sessions", sa.Column("owner_user_id", postgresql.UUID(as_uuid=True), nullable=True))
+    op.add_column(
+        "sessions",
+        sa.Column("owner_user_id", postgresql.UUID(as_uuid=True), nullable=True),
+    )
     op.create_foreign_key(
         "fk_sessions_owner_user_id_users",
         "sessions",

@@ -24,7 +24,12 @@ def upgrade() -> None:
         sa.Column("provider", sa.String(length=20), nullable=False),
         sa.Column("account_login", sa.String(length=255), nullable=False),
         sa.Column("encrypted_access_token", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -35,7 +40,10 @@ def upgrade() -> None:
         unique=True,
     )
 
-    op.add_column("sessions", sa.Column("provider_connection_id", postgresql.UUID(as_uuid=True), nullable=True))
+    op.add_column(
+        "sessions",
+        sa.Column("provider_connection_id", postgresql.UUID(as_uuid=True), nullable=True),
+    )
     op.add_column("sessions", sa.Column("vcs_provider", sa.String(length=20), nullable=True))
     op.add_column("sessions", sa.Column("repo_owner", sa.String(length=255), nullable=True))
     op.add_column("sessions", sa.Column("repo_name", sa.String(length=255), nullable=True))
@@ -64,5 +72,8 @@ def downgrade() -> None:
     op.drop_column("sessions", "vcs_provider")
     op.drop_column("sessions", "provider_connection_id")
 
-    op.drop_index("ix_provider_connections_user_provider_account", table_name="provider_connections")
+    op.drop_index(
+        "ix_provider_connections_user_provider_account",
+        table_name="provider_connections",
+    )
     op.drop_table("provider_connections")
