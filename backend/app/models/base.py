@@ -33,7 +33,11 @@ class Session(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    tasks: Mapped[list["Task"]] = relationship("Task", back_populates="session", cascade="all, delete-orphan")
+    tasks: Mapped[list["Task"]] = relationship(
+        "Task",
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
     audit_events: Mapped[list["AuditEvent"]] = relationship("AuditEvent", back_populates="session")
     owner: Mapped["User | None"] = relationship("User", back_populates="sessions")
     provider_connection: Mapped["ProviderConnection | None"] = relationship(
@@ -46,7 +50,10 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"))
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+    )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     scope_dir: Mapped[str] = mapped_column(Text, nullable=False)
@@ -57,7 +64,11 @@ class Task(Base):
 
     session: Mapped["Session"] = relationship("Session", back_populates="tasks")
     agent: Mapped["Agent | None"] = relationship("Agent", back_populates="task", uselist=False)
-    merge_request: Mapped["MergeRequest | None"] = relationship("MergeRequest", back_populates="task", uselist=False)
+    merge_request: Mapped["MergeRequest | None"] = relationship(
+        "MergeRequest",
+        back_populates="task",
+        uselist=False,
+    )
     audit_events: Mapped[list["AuditEvent"]] = relationship("AuditEvent", back_populates="task")
 
 
@@ -65,7 +76,10 @@ class Agent(Base):
     __tablename__ = "agents"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"))
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+    )
     container_id: Mapped[str | None] = mapped_column(Text)
     worktree_path: Mapped[str | None] = mapped_column(Text)
     port: Mapped[int | None] = mapped_column(Integer)
@@ -117,7 +131,11 @@ class BackgroundJob(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
-    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     locked_by: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -227,4 +245,7 @@ class ProviderConnection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="provider_connections")
-    sessions: Mapped[list["Session"]] = relationship("Session", back_populates="provider_connection")
+    sessions: Mapped[list["Session"]] = relationship(
+        "Session",
+        back_populates="provider_connection",
+    )

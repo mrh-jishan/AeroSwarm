@@ -5,7 +5,6 @@ Each agent writes to channel:  logs:<agent_id>
 Frontend subscribes via:       WS /ws/agents/<agent_id>/logs
 """
 
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 

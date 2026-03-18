@@ -6,13 +6,26 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, WebSocketException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    WebSocketException,
+    status,
+)
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.core.database import AsyncSessionLocal, get_db
-from app.core.security import AuthContext, get_websocket_auth_context, require_internal_context, require_user_context
+from app.core.security import (
+    AuthContext,
+    get_websocket_auth_context,
+    require_internal_context,
+    require_user_context,
+)
 from app.models.base import Agent, Session, Task
 from app.services.agent_launcher import AgentLauncherService
 from app.services.redis_streamer import redis_streamer

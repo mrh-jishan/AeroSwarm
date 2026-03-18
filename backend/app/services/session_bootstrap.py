@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.base import Agent, MergeRequest, ProviderConnection, Session, Task
+from app.models.base import Agent, MergeRequest, Session, Task
 from app.services.agent_launcher import AgentLauncherService
 from app.services.audit import AuditService
 from app.services.crypto import CredentialCryptoService
@@ -51,7 +51,11 @@ class SessionBootstrapService:
         try:
             await self._cleanup_existing_tasks(db, session)
 
-            repo_access_token, repo_username = await self._resolve_repo_credentials(db, session, payload)
+            repo_access_token, repo_username = await self._resolve_repo_credentials(
+                db,
+                session,
+                payload,
+            )
 
             self._repo_mgr.clone_repo(
                 session.id,
@@ -60,7 +64,12 @@ class SessionBootstrapService:
                 repo_username=repo_username,
             )
             session.base_branch = self._repo_mgr.get_default_branch(session.id)
-            if session.vcs_provider == "github" and session.repo_owner and session.repo_name and repo_access_token:
+            if (
+                session.vcs_provider == "github"
+                and session.repo_owner
+                and session.repo_name
+                and repo_access_token
+            ):
                 try:
                     repo_info = await self._github.get_repo(
                         session.repo_owner,
@@ -109,7 +118,11 @@ class SessionBootstrapService:
                     session_id=session.id,
                     task_id=task.id,
                     agent_id=agent.id,
-                    details={"task_title": task.title, "scope_dir": task.scope_dir, "port": agent.port},
+                    details={
+                        "task_title": task.title,
+                        "scope_dir": task.scope_dir,
+                        "port": agent.port,
+                    },
                 )
 
             session.status = "running"

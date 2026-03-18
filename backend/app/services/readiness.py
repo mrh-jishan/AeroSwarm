@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from sqlalchemy import text
-
 import redis.asyncio as aioredis
+from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import engine

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
-from urllib.parse import urlencode
 import uuid
+from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
@@ -91,7 +91,11 @@ async def _upsert_github_connection(
     return connection
 
 
-@router.post("/github/connect", response_model=ProviderConnectionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/github/connect",
+    response_model=ProviderConnectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def connect_github(
     payload: GitHubConnectRequest,
     auth: AuthContext = Depends(require_user_context),
@@ -160,7 +164,10 @@ async def github_oauth_callback(
         )
     if not code or not state:
         return RedirectResponse(
-            _build_frontend_redirect("/", {"github_oauth": "error", "message": "missing callback parameters"}),
+            _build_frontend_redirect(
+                "/",
+                {"github_oauth": "error", "message": "missing callback parameters"},
+            ),
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
         )
 
@@ -259,7 +266,10 @@ async def github_app_install_callback(
 ):
     if installation_id is None or not state:
         return RedirectResponse(
-            _build_frontend_redirect("/", {"github_app": "error", "message": "missing install parameters"}),
+            _build_frontend_redirect(
+                "/",
+                {"github_app": "error", "message": "missing install parameters"},
+            ),
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
         )
 
@@ -368,7 +378,9 @@ async def github_webhook(
         return {"status": "ignored", "reason": "merge request not found"}
 
     mr, task, session = row
-    mr.provider_pr_url = str(pull_request.get("html_url")) if pull_request.get("html_url") else mr.provider_pr_url
+    mr.provider_pr_url = (
+        str(pull_request.get("html_url")) if pull_request.get("html_url") else mr.provider_pr_url
+    )
 
     if action == "closed":
         if merged:

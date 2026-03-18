@@ -1,5 +1,6 @@
 """Sessions API — create session, trigger orchestration, list sessions."""
 
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -186,9 +187,11 @@ async def get_session(
 
     task_result = await db.execute(select(Task).where(Task.session_id == session_id))
     tasks = task_result.scalars().all()
-    agent_result = await db.execute(
-        select(Agent).where(Agent.task_id.in_([task.id for task in tasks]))
-    ) if tasks else None
+    agent_result = (
+        await db.execute(select(Agent).where(Agent.task_id.in_([task.id for task in tasks])))
+        if tasks
+        else None
+    )
     agents = agent_result.scalars().all() if agent_result else []
 
     return SessionResponse(

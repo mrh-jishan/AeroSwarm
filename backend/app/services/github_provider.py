@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
@@ -83,7 +83,10 @@ class GitHubProviderService:
         data = response.json()
         access_token = data.get("access_token")
         if not access_token:
-            raise ValueError(f"GitHub OAuth error: {data.get('error_description', 'missing access token')}")
+            raise ValueError(
+                "GitHub OAuth error: "
+                f"{data.get('error_description', 'missing access token')}"
+            )
         return str(access_token)
 
     def build_app_install_url(self, state: str) -> str:

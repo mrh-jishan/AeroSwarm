@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import Agent, MergeRequest, ProviderConnection, Session, Task
 from app.services.audit import AuditService
-from app.services.github_provider import GitHubProviderService
 from app.services.git_manager import GitManagerService
+from app.services.github_provider import GitHubProviderService
 from app.services.janitor import JanitorService
 from app.services.provider_connections import ProviderConnectionService
 from app.services.repo_manager import RepoManagerService
@@ -92,7 +92,9 @@ class MergePreflightService:
 
             provider_connection = await self._resolve_provider_connection(session, db)
             if session.vcs_provider == "github" and provider_connection is not None:
-                access_token = await self._provider_connections.resolve_access_token(provider_connection)
+                access_token = await self._provider_connections.resolve_access_token(
+                    provider_connection
+                )
                 await self._sync_github_pull_request(
                     session=session,
                     task=task,
@@ -139,7 +141,12 @@ class MergePreflightService:
         access_token: str,
         db: AsyncSession,
     ) -> None:
-        if not session.repo_owner or not session.repo_name or not session.base_branch or not task.branch_name:
+        if (
+            not session.repo_owner
+            or not session.repo_name
+            or not session.base_branch
+            or not task.branch_name
+        ):
             raise ValueError("Session is missing GitHub repository metadata")
 
         repo_path = self._repo_mgr.get_repo_path(session.id)

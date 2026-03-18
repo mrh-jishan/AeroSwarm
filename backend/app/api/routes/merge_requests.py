@@ -142,7 +142,10 @@ async def create_merge_request(
         return _build_merge_request_response(mr)
 
     if agent.container_id is None:
-        raise HTTPException(status_code=400, detail="Agent container is not available for preflight")
+        raise HTTPException(
+            status_code=400,
+            detail="Agent container is not available for preflight",
+        )
 
     mr.status = "queued"
     mr.lint_passed = None
@@ -253,15 +256,25 @@ async def approve_merge(
     if mr is None:
         raise HTTPException(status_code=404, detail="Merge request not found")
     if mr.status != "pending":
-        raise HTTPException(status_code=409, detail=f"Cannot approve a merge request in state '{mr.status}'")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot approve a merge request in state '{mr.status}'",
+        )
     if not mr.lint_passed or not mr.tests_passed:
-        raise HTTPException(status_code=409, detail="Preflight checks must pass before merge approval")
+        raise HTTPException(
+            status_code=409,
+            detail="Preflight checks must pass before merge approval",
+        )
 
     task_result = await db.execute(select(Task).where(Task.id == mr.task_id))
     task = task_result.scalar_one_or_none()
     agent_result = await db.execute(select(Agent).where(Agent.task_id == mr.task_id))
     agent = agent_result.scalar_one_or_none()
-    session_result = await db.execute(select(Session).where(Session.id == task.session_id)) if task else None
+    session_result = (
+        await db.execute(select(Session).where(Session.id == task.session_id))
+        if task
+        else None
+    )
     session = session_result.scalar_one_or_none() if session_result else None
 
     if task is None or task.branch_name is None or session is None:

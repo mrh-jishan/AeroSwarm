@@ -105,7 +105,10 @@ async def require_user_context(
     auth: AuthContext = Depends(get_auth_context),
 ) -> AuthContext:
     if not auth.is_user:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User authentication required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User authentication required",
+        )
     return auth
 
 
@@ -115,7 +118,10 @@ async def require_internal_context(
     if not settings.API_BEARER_TOKEN:
         return AuthContext(actor="system", user_id=None, auth_type="internal")
     if auth.auth_type != "internal":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Internal authentication required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Internal authentication required",
+        )
     return auth
 
 
@@ -125,7 +131,11 @@ async def get_websocket_auth_context(websocket: WebSocket) -> AuthContext:
 
     auth_header = websocket.headers.get("authorization", "")
     query_token = websocket.query_params.get("token")
-    header_token = auth_header.removeprefix("Bearer ").strip() if auth_header.startswith("Bearer ") else None
+    header_token = (
+        auth_header.removeprefix("Bearer ").strip()
+        if auth_header.startswith("Bearer ")
+        else None
+    )
     cookie_token = websocket.cookies.get(settings.ACCESS_COOKIE_NAME)
     token = query_token or header_token or cookie_token
 

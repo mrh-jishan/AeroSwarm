@@ -35,9 +35,15 @@ def test_refresh_and_reset_tokens_hash_consistently() -> None:
     refresh_token = service.create_refresh_token()
     reset_token = service.create_password_reset_token()
 
-    assert service.hash_refresh_token(refresh_token) == service.hash_refresh_token(refresh_token)
-    assert service.hash_password_reset_token(reset_token) == service.hash_password_reset_token(reset_token)
-    assert service.hash_refresh_token(refresh_token) != service.hash_password_reset_token(reset_token)
+    assert service.hash_refresh_token(refresh_token) == service.hash_refresh_token(
+        refresh_token
+    )
+    assert service.hash_password_reset_token(
+        reset_token
+    ) == service.hash_password_reset_token(reset_token)
+    assert service.hash_refresh_token(
+        refresh_token
+    ) != service.hash_password_reset_token(reset_token)
 
 
 def test_expiry_helpers_return_future_timestamps() -> None:

@@ -14,7 +14,6 @@ import pytest
 
 from scripts.github_live_smoke import load_live_config, run_live_smoke
 
-
 REQUIRED_LIVE_ENV_VARS = [
     "AEROSWARM_EMAIL",
     "AEROSWARM_PASSWORD",
