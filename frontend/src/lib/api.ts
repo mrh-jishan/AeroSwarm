@@ -1,6 +1,7 @@
 /** API client helpers — thin wrappers over fetch. */
 
 import type {
+  AgentSummary,
   AuthResponse,
   MergeRequestResponse,
   PasswordResetRequestResponse,
@@ -20,6 +21,29 @@ export function clearApiToken() {
   // Cookie-backed auth does not require browser-side token storage.
 }
 
+function readCookie(name: string): string | undefined {
+  if (typeof document === "undefined") {
+    return undefined;
+  }
+
+  const prefix = `${name}=`;
+  const cookie = document.cookie
+    .split(";")
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith(prefix));
+  return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : undefined;
+}
+
+function csrfHeaders(method?: string): Record<string, string> {
+  const normalizedMethod = method?.toUpperCase() ?? "GET";
+  if (normalizedMethod === "GET" || normalizedMethod === "HEAD" || normalizedMethod === "OPTIONS") {
+    return {};
+  }
+
+  const csrfToken = readCookie("aeroswarm_csrf");
+  return csrfToken ? { "X-CSRF-Token": csrfToken } : {};
+}
+
 function buildHeaders(extra: Record<string, string> = {}) {
   const token = getApiToken();
   return {
@@ -30,7 +54,10 @@ function buildHeaders(extra: Record<string, string> = {}) {
 }
 
 async function requestJson<T>(path: string, init: RequestInit = {}, retryOnAuth = true): Promise<T> {
-  const headers = buildHeaders((init.headers as Record<string, string>) || {});
+  const headers = buildHeaders({
+    ...csrfHeaders(init.method),
+    ...((init.headers as Record<string, string>) || {}),
+  });
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     credentials: "include",
@@ -79,6 +106,10 @@ export async function createSession(payload: {
 
 export async function listProviderConnections(): Promise<ProviderConnection[]> {
   return requestJson<ProviderConnection[]>("/api/vcs/connections", { method: "GET" });
+}
+
+export async function fetchSession(sessionId: string): Promise<SessionResponse> {
+  return requestJson<SessionResponse>(`/api/sessions/${sessionId}`, { method: "GET" });
 }
 
 export async function connectGitHub(payload: {
@@ -136,7 +167,7 @@ export async function logout(): Promise<void> {
   await fetch(`${API_BASE}/api/auth/logout`, {
     method: "POST",
     credentials: "include",
-    headers: buildHeaders(),
+    headers: buildHeaders(csrfHeaders("POST")),
   }).catch(() => undefined);
 
   clearApiToken();
@@ -164,14 +195,20 @@ export async function confirmPasswordReset(payload: {
   });
 }
 
-export async function fetchAgents(sessionId: string) {
-  return requestJson(`/api/sessions/${sessionId}/agents`, { method: "GET" });
+export async function fetchAgents(sessionId: string): Promise<AgentSummary[]> {
+  return requestJson<AgentSummary[]>(`/api/sessions/${sessionId}/agents`, { method: "GET" });
 }
 
 export async function createMergeRequest(taskId: string): Promise<MergeRequestResponse> {
   return requestJson<MergeRequestResponse>("/api/merge-requests/", {
     method: "POST",
     body: JSON.stringify({ task_id: taskId }),
+  });
+}
+
+export async function fetchMergeRequest(mrId: string): Promise<MergeRequestResponse> {
+  return requestJson<MergeRequestResponse>(`/api/merge-requests/${mrId}`, {
+    method: "GET",
   });
 }
 

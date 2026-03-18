@@ -92,6 +92,17 @@ python3 scripts/github_live_smoke.py
 
 You can also omit `AEROSWARM_PROVIDER_CONNECTION_ID` and provide `AEROSWARM_GITHUB_PAT` for PAT-based fallback.
 
+## Pytest Integration Entry Point
+
+The repo also includes a live integration test that wraps the same flow and skips automatically if the live env is incomplete:
+
+```bash
+cd backend
+python3 -m pytest tests/test_github_live_integration.py -m integration -q
+```
+
+This is the preferred command for CI or staging validation because it produces normal pytest pass/skip/fail output.
+
 ## Webhook Validation
 
 1. Merge or close the PR directly in GitHub.

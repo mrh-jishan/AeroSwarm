@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     AUTH_RATE_LIMIT_MAX_ATTEMPTS: int = 10
     ACCESS_COOKIE_NAME: str = "aeroswarm_access"
     REFRESH_COOKIE_NAME: str = "aeroswarm_refresh"
+    CSRF_COOKIE_NAME: str = "aeroswarm_csrf"
+    CSRF_HEADER_NAME: str = "X-CSRF-Token"
     COOKIE_SECURE: bool = False
     COOKIE_SAMESITE: str = "lax"
     RUN_MIGRATIONS_ON_STARTUP: bool = False
@@ -49,6 +51,10 @@ class Settings(BaseSettings):
     AGENT_PORT_RANGE_END: int = 20000
     AGENT_MAX_TTL_SECONDS: int = 3600  # 1 hour hard stop
     JANITOR_COMMAND_TIMEOUT_SECONDS: int = 600
+    JOB_POLL_INTERVAL_SECONDS: int = 2
+    JOB_MAX_ATTEMPTS: int = 3
+    JOB_RETRY_BASE_SECONDS: int = 15
+    JOB_LOCK_TIMEOUT_SECONDS: int = 900
 
 
 settings = Settings()

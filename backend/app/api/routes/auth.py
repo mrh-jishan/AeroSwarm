@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from secrets import token_urlsafe
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
@@ -97,6 +98,15 @@ def _set_auth_cookies(response: Response, access_token: str, refresh_token: str)
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
         path="/",
     )
+    response.set_cookie(
+        key=settings.CSRF_COOKIE_NAME,
+        value=token_urlsafe(32),
+        httponly=False,
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        path="/",
+    )
 
 
 def _clear_auth_cookies(response: Response) -> None:
@@ -108,6 +118,12 @@ def _clear_auth_cookies(response: Response) -> None:
     )
     response.delete_cookie(
         key=settings.REFRESH_COOKIE_NAME,
+        path="/",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
+    )
+    response.delete_cookie(
+        key=settings.CSRF_COOKIE_NAME,
         path="/",
         secure=settings.COOKIE_SECURE,
         samesite=settings.COOKIE_SAMESITE,

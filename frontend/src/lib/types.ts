@@ -19,6 +19,7 @@ export interface SessionResponse {
   base_branch?: string | null;
   prompt: string;
   status: string;
+  error_message?: string | null;
   task_count: number;
   agent_count: number;
 }
@@ -45,6 +46,7 @@ export interface MergeRequestResponse {
   tests_passed: boolean;
   provider_pr_number?: number | null;
   provider_pr_url?: string | null;
+  error_message?: string | null;
   checks: PreflightCheck[];
 }
 

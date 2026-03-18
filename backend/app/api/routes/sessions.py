@@ -1,6 +1,5 @@
 """Sessions API — create session, trigger orchestration, list sessions."""
 
-import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,24 +10,18 @@ from sqlalchemy.future import select
 from app.core.database import get_db
 from app.core.security import AuthContext, require_user_context
 from app.models.base import Agent, AuditEvent, ProviderConnection, Session, Task
-from app.services.agent_launcher import AgentLauncherService
 from app.services.audit import AuditService
 from app.services.crypto import CredentialCryptoService
-from app.services.github_provider import GitHubProviderService
-from app.services.orchestrator import OrchestratorService
+from app.services.job_queue import JOB_TYPE_SESSION_BOOTSTRAP, JobQueueService
 from app.services.provider_connections import ProviderConnectionService
-from app.services.repo_manager import RepoManagerService
 from app.services.vcs import RepoIdentity, VcsService
 
 router = APIRouter(dependencies=[Depends(require_user_context)])
-orchestrator = OrchestratorService()
-launcher = AgentLauncherService()
 audit = AuditService()
-repo_mgr = RepoManagerService()
 crypto = CredentialCryptoService()
-github = GitHubProviderService()
 vcs = VcsService()
 provider_connections = ProviderConnectionService()
+job_queue = JobQueueService()
 
 
 class CreateSessionRequest(BaseModel):
@@ -48,6 +41,7 @@ class SessionResponse(BaseModel):
     base_branch: str | None = None
     prompt: str
     status: str
+    error_message: str | None = None
     task_count: int
     agent_count: int = 0
 
@@ -77,49 +71,18 @@ async def _resolve_provider_connection(
     db: AsyncSession,
     identity: RepoIdentity,
 ) -> ProviderConnection | None:
-    connection: ProviderConnection | None = None
+    if payload.provider_connection_id is None:
+        return None
 
-    if payload.provider_connection_id is not None:
-        result = await db.execute(
-            select(ProviderConnection).where(
-                ProviderConnection.id == payload.provider_connection_id,
-                ProviderConnection.user_id == auth.user_id,
-            )
+    result = await db.execute(
+        select(ProviderConnection).where(
+            ProviderConnection.id == payload.provider_connection_id,
+            ProviderConnection.user_id == auth.user_id,
         )
-        connection = result.scalar_one_or_none()
-        if connection is None:
-            raise HTTPException(status_code=404, detail="Provider connection not found")
-
-    if payload.repo_access_token and identity.provider == "github":
-        try:
-            gh_user = await github.get_authenticated_user(payload.repo_access_token)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        existing_result = await db.execute(
-            select(ProviderConnection).where(
-                ProviderConnection.user_id == auth.user_id,
-                ProviderConnection.provider == "github",
-                ProviderConnection.account_login == gh_user.login,
-            )
-        )
-        connection = existing_result.scalar_one_or_none()
-        encrypted_token = crypto.encrypt(payload.repo_access_token)
-        if connection is None:
-            connection = ProviderConnection(
-                user_id=auth.user_id,
-                provider="github",
-                auth_mode="token",
-                account_login=gh_user.login,
-                encrypted_access_token=encrypted_token,
-            )
-            db.add(connection)
-            await db.flush()
-        else:
-            connection.auth_mode = "token"
-            connection.installation_id = None
-            connection.encrypted_access_token = encrypted_token
-
+    )
+    connection = result.scalar_one_or_none()
+    if connection is None:
+        raise HTTPException(status_code=404, detail="Provider connection not found")
     return connection
 
 
@@ -148,15 +111,6 @@ async def create_session(
         identity=identity,
     )
 
-    repo_access_token = payload.repo_access_token
-    repo_username = payload.repo_username
-    if repo_access_token is None and provider_connection is not None:
-        try:
-            repo_access_token = await provider_connections.resolve_access_token(provider_connection)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        repo_username = provider_connections.require_token_username(provider_connection)
-
     session = Session(
         owner_user_id=auth.user_id,
         provider_connection_id=provider_connection.id if provider_connection else None,
@@ -165,10 +119,11 @@ async def create_session(
         repo_owner=identity.owner,
         repo_name=identity.name,
         prompt=payload.prompt,
-        status="planning",
+        status="queued",
+        error_message=None,
     )
     db.add(session)
-    await db.flush()  # get session.id without committing
+    await db.flush()
     await audit.record(
         db,
         "session.created",
@@ -176,86 +131,25 @@ async def create_session(
         session_id=session.id,
         details={"repo_url": payload.repo_url, "prompt": payload.prompt},
     )
-
-    try:
-        repo_mgr.clone_repo(
-            session.id,
-            payload.repo_url,
-            repo_access_token=repo_access_token,
-            repo_username=repo_username,
-        )
-    except Exception as exc:
-        await db.rollback()
-        repo_mgr.cleanup_session_repo(session.id)
-        raise HTTPException(status_code=502, detail="Failed to clone repository") from exc
-
-    session.base_branch = repo_mgr.get_default_branch(session.id)
-    if (
-        session.vcs_provider == "github"
-        and session.repo_owner
-        and session.repo_name
-        and repo_access_token
-    ):
-        try:
-            repo_info = await github.get_repo(session.repo_owner, session.repo_name, repo_access_token)
-            session.base_branch = repo_info.default_branch
-        except ValueError:
-            pass
-    await audit.record(
+    await job_queue.enqueue(
         db,
-        "repo.cloned",
-        auth.actor,
+        job_type=JOB_TYPE_SESSION_BOOTSTRAP,
         session_id=session.id,
-        details={
-            "repo_url": payload.repo_url,
-            "provider": session.vcs_provider,
-            "repo_owner": session.repo_owner,
-            "repo_name": session.repo_name,
-            "base_branch": session.base_branch,
+        payload={
+            "requested_by": auth.actor,
+            "repo_username": payload.repo_username or "",
+            "encrypted_repo_access_token": crypto.encrypt(payload.repo_access_token)
+            if payload.repo_access_token
+            else "",
         },
     )
-
-    # Decompose prompt into sub-tasks
-    try:
-        sub_tasks = await orchestrator.decompose(payload.prompt)
-    except ValueError as exc:
-        await db.rollback()
-        repo_mgr.cleanup_session_repo(session.id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    tasks = []
-    for st in sub_tasks:
-        task = Task(
-            session_id=session.id,
-            title=st.title,
-            description=st.description,
-            scope_dir=st.scope_dir,
-            status="pending",
-            branch_name=None,
-        )
-        db.add(task)
-        tasks.append(task)
-
-    await db.flush()
-
-    try:
-        for task in tasks:
-            agent = await launcher.launch_for_task(db, task)
-            await audit.record(
-                db,
-                "agent.launched",
-                auth.actor,
-                session_id=session.id,
-                task_id=task.id,
-                agent_id=agent.id,
-                details={"task_title": task.title, "scope_dir": task.scope_dir, "port": agent.port},
-            )
-    except Exception as exc:
-        await db.rollback()
-        repo_mgr.cleanup_session_repo(session.id)
-        raise HTTPException(status_code=502, detail=f"Failed to launch agents: {exc}") from exc
-
-    session.status = "running"
+    await audit.record(
+        db,
+        "session.bootstrap.queued",
+        auth.actor,
+        session_id=session.id,
+        details={"repo_url": payload.repo_url},
+    )
     await db.commit()
     await db.refresh(session)
 
@@ -268,8 +162,9 @@ async def create_session(
         base_branch=session.base_branch,
         prompt=session.prompt,
         status=session.status,
-        task_count=len(tasks),
-        agent_count=len(tasks),
+        error_message=session.error_message,
+        task_count=0,
+        agent_count=0,
     )
 
 
@@ -305,6 +200,7 @@ async def get_session(
         base_branch=session.base_branch,
         prompt=session.prompt,
         status=session.status,
+        error_message=session.error_message,
         task_count=len(tasks),
         agent_count=len(agents),
     )

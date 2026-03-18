@@ -6,12 +6,15 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.routes import agents, auth, merge_requests, sessions, vcs
 from app.core.config import settings
+from app.core.security import validate_csrf_request
 from app.models import base  # noqa: F401 — ensure models are imported before create_all
+from app.services.readiness import ReadinessService
 
 
 def _run_alembic_upgrade() -> None:
@@ -37,6 +40,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+readiness = ReadinessService()
 
 # ── CORS (restrict in production via settings) ────────────────────────────────
 app.add_middleware(
@@ -46,6 +50,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def csrf_protection_middleware(request: Request, call_next):
+    try:
+        validate_csrf_request(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
@@ -58,3 +71,15 @@ app.include_router(vcs.router, prefix="/api/vcs", tags=["vcs"])
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "aeroswarm-backend"}
+
+
+@app.get("/ready")
+async def readiness_check():
+    ready, checks = await readiness.run_checks()
+    if not ready:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "service": "aeroswarm-backend", "checks": checks},
+        )
+
+    return {"status": "ok", "service": "aeroswarm-backend", "checks": checks}

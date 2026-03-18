@@ -3,6 +3,7 @@ Merge Requests API — Janitor Protocol.
 Handles: pre-flight lint/test, visual diff, HITL approval, merge + cleanup.
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -18,18 +19,18 @@ from app.services.audit import AuditService
 from app.services.docker_manager import DockerManagerService
 from app.services.git_manager import GitManagerService
 from app.services.github_provider import GitHubProviderService
-from app.services.janitor import JanitorService
+from app.services.job_queue import JOB_TYPE_MERGE_PREFLIGHT, JobQueueService
 from app.services.provider_connections import ProviderConnectionService
 from app.services.repo_manager import RepoManagerService
 
 router = APIRouter(dependencies=[Depends(require_user_context)])
 docker_mgr = DockerManagerService()
 git_mgr = GitManagerService()
-janitor = JanitorService()
 repo_mgr = RepoManagerService()
 audit = AuditService()
 github = GitHubProviderService()
 provider_connections = ProviderConnectionService()
+job_queue = JobQueueService()
 
 
 class CreateMergeRequestBody(BaseModel):
@@ -53,6 +54,7 @@ class MergeRequestResponse(BaseModel):
     tests_passed: bool
     provider_pr_number: int | None = None
     provider_pr_url: str | None = None
+    error_message: str | None = None
     checks: list[PreflightCheckResponse]
 
 
@@ -69,80 +71,37 @@ async def _resolve_provider_connection(
     return result.scalar_one_or_none()
 
 
-async def _sync_github_pull_request(
-    *,
-    session: Session,
-    task: Task,
-    mr: MergeRequest,
-    checks: list[PreflightCheckResponse],
-    access_token: str,
-    db: AsyncSession,
-) -> None:
-    if not session.repo_owner or not session.repo_name or not session.base_branch or not task.branch_name:
-        raise HTTPException(status_code=400, detail="Session is missing GitHub repository metadata")
-
-    repo_path = repo_mgr.get_repo_path(session.id)
-    authenticated_url = repo_mgr.build_authenticated_repo_url(
-        session.repo_url,
-        access_token,
-        "x-access-token",
-    )
+def _deserialize_checks(raw_checks: str | None) -> list[PreflightCheckResponse]:
+    if not raw_checks:
+        return []
     try:
-        git_mgr.push_branch(str(repo_path), authenticated_url, task.branch_name)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to push branch to GitHub: {exc}") from exc
-
-    comment_lines = [
-        "AeroSwarm preflight results:",
-        "",
+        data = json.loads(raw_checks)
+    except json.JSONDecodeError:
+        return []
+    return [
+        PreflightCheckResponse(
+            category=item["category"],
+            label=item["label"],
+            status=item["status"],
+            command=item.get("command"),
+            summary=item["summary"],
+            output=item.get("output"),
+        )
+        for item in data
     ]
-    for check in checks:
-        status_icon = {
-            "passed": "PASS",
-            "failed": "FAIL",
-            "skipped": "SKIP",
-        }.get(check.status, check.status.upper())
-        comment_lines.append(f"- [{status_icon}] {check.label}: {check.summary}")
-    comment_body = "\n".join(comment_lines)
 
-    try:
-        pr = await github.find_open_pull_request(
-            owner=session.repo_owner,
-            name=session.repo_name,
-            head=f"{session.repo_owner}:{task.branch_name}",
-            base=session.base_branch,
-            access_token=access_token,
-        )
-        if pr is None:
-            pr = await github.create_pull_request(
-                owner=session.repo_owner,
-                name=session.repo_name,
-                title=task.title,
-                body=task.description or f"AeroSwarm task: {task.title}",
-                head=task.branch_name,
-                base=session.base_branch,
-                access_token=access_token,
-            )
 
-        await github.comment_on_pull_request(
-            owner=session.repo_owner,
-            name=session.repo_name,
-            issue_number=pr.number,
-            body=comment_body,
-            access_token=access_token,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    mr.provider_pr_number = pr.number
-    mr.provider_pr_url = pr.html_url
-    await audit.record(
-        db,
-        "merge.github_pr.synced",
-        "system",
-        session_id=session.id,
-        task_id=task.id,
-        details={"pr_number": pr.number, "pr_url": pr.html_url, "branch": task.branch_name},
+def _build_merge_request_response(mr: MergeRequest) -> MergeRequestResponse:
+    return MergeRequestResponse(
+        merge_request_id=mr.id,
+        status=mr.status,
+        ready_to_merge=bool(mr.lint_passed and mr.tests_passed),
+        lint_passed=bool(mr.lint_passed),
+        tests_passed=bool(mr.tests_passed),
+        provider_pr_number=mr.provider_pr_number,
+        provider_pr_url=mr.provider_pr_url,
+        error_message=mr.error_message,
+        checks=_deserialize_checks(mr.checks_json),
     )
 
 
@@ -152,7 +111,7 @@ async def create_merge_request(
     auth: AuthContext = Depends(require_user_context),
     db: AsyncSession = Depends(get_db),
 ):
-    """Mark a task as ready to merge — triggers Janitor pre-flight."""
+    """Mark a task as ready to merge — queues Janitor pre-flight."""
     result = await db.execute(
         select(Task)
         .join(Session, Session.id == Task.session_id)
@@ -179,78 +138,56 @@ async def create_merge_request(
         mr = MergeRequest(task_id=task.id, status="pending")
         db.add(mr)
         await db.flush()
+    elif mr.status in {"queued", "running", "pending"}:
+        return _build_merge_request_response(mr)
 
     if agent.container_id is None:
         raise HTTPException(status_code=400, detail="Agent container is not available for preflight")
 
-    report = await janitor.run_preflight(agent.worktree_path, agent.container_id)
-    mr.lint_passed = report.lint_passed
-    mr.tests_passed = report.tests_passed
-    mr.status = "pending" if report.ready_to_merge else "failed"
-    task.status = "merging" if report.ready_to_merge else "done"
+    mr.status = "queued"
+    mr.lint_passed = None
+    mr.tests_passed = None
+    mr.checks_json = None
+    mr.error_message = None
+    task.status = "merging"
+    await job_queue.enqueue(
+        db,
+        job_type=JOB_TYPE_MERGE_PREFLIGHT,
+        merge_request_id=mr.id,
+        payload={"requested_by": auth.actor},
+    )
     await audit.record(
         db,
-        "merge.preflight.completed",
+        "merge.preflight.queued",
         auth.actor,
         session_id=task.session_id,
         task_id=task.id,
         agent_id=agent.id,
-        details={
-            "ready_to_merge": report.ready_to_merge,
-            "lint_passed": report.lint_passed,
-            "tests_passed": report.tests_passed,
-        },
+        details={"merge_request_id": str(mr.id)},
     )
-
-    provider_connection = await _resolve_provider_connection(session, db)
-    if session.vcs_provider == "github" and provider_connection is not None:
-        try:
-            access_token = await provider_connections.resolve_access_token(provider_connection)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        checks = [
-            PreflightCheckResponse(
-                category=check.category,
-                label=check.label,
-                status=check.status,
-                command=check.command,
-                summary=check.summary,
-                output=check.output,
-            )
-            for check in report.checks
-        ]
-        await _sync_github_pull_request(
-            session=session,
-            task=task,
-            mr=mr,
-            checks=checks,
-            access_token=access_token,
-            db=db,
-        )
 
     await db.commit()
     await db.refresh(mr)
 
-    return MergeRequestResponse(
-        merge_request_id=mr.id,
-        status=mr.status,
-        ready_to_merge=report.ready_to_merge,
-        lint_passed=report.lint_passed,
-        tests_passed=report.tests_passed,
-        provider_pr_number=mr.provider_pr_number,
-        provider_pr_url=mr.provider_pr_url,
-        checks=[
-            PreflightCheckResponse(
-                category=check.category,
-                label=check.label,
-                status=check.status,
-                command=check.command,
-                summary=check.summary,
-                output=check.output,
-            )
-            for check in report.checks
-        ],
+    return _build_merge_request_response(mr)
+
+
+@router.get("/{mr_id}", response_model=MergeRequestResponse)
+async def get_merge_request(
+    mr_id: uuid.UUID,
+    auth: AuthContext = Depends(require_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(MergeRequest)
+        .join(Task, Task.id == MergeRequest.task_id)
+        .join(Session, Session.id == Task.session_id)
+        .where(MergeRequest.id == mr_id, Session.owner_user_id == auth.user_id)
     )
+    mr = result.scalar_one_or_none()
+    if mr is None:
+        raise HTTPException(status_code=404, detail="Merge request not found")
+    return _build_merge_request_response(mr)
 
 
 @router.get("/{mr_id}/diff")

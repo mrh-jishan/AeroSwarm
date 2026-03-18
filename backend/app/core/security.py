@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from http import HTTPMethod
 
 from fastapi import Depends, HTTPException, Request, WebSocket, WebSocketException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -13,6 +14,11 @@ from app.services.auth import AuthService
 
 bearer_scheme = HTTPBearer(auto_error=False)
 auth_service = AuthService()
+SAFE_METHODS = {
+    HTTPMethod.GET,
+    HTTPMethod.HEAD,
+    HTTPMethod.OPTIONS,
+}
 
 
 @dataclass(slots=True)
@@ -56,6 +62,39 @@ async def get_auth_context(
         ) from exc
 
     return AuthContext(actor=claims.email, user_id=claims.user_id, auth_type="user")
+
+
+def _has_bearer_authorization(request: Request) -> bool:
+    auth_header = request.headers.get("authorization", "")
+    return auth_header.startswith("Bearer ")
+
+
+def _has_cookie_authenticated_session(request: Request) -> bool:
+    return bool(
+        request.cookies.get(settings.ACCESS_COOKIE_NAME)
+        or request.cookies.get(settings.REFRESH_COOKIE_NAME)
+    )
+
+
+def should_enforce_csrf(request: Request) -> bool:
+    if request.method.upper() in SAFE_METHODS:
+        return False
+    if _has_bearer_authorization(request):
+        return False
+    return _has_cookie_authenticated_session(request)
+
+
+def validate_csrf_request(request: Request) -> None:
+    if not should_enforce_csrf(request):
+        return
+
+    cookie_token = request.cookies.get(settings.CSRF_COOKIE_NAME)
+    header_token = request.headers.get(settings.CSRF_HEADER_NAME)
+    if not cookie_token or not header_token or cookie_token != header_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSRF validation failed",
+        )
 
 
 async def require_api_token() -> AuthContext:

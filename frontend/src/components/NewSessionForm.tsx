@@ -140,7 +140,7 @@ export function NewSessionForm({ onSessionCreated, currentUserEmail }: NewSessio
       const repoSummary = session.repo_owner && session.repo_name
         ? ` • ${session.repo_owner}/${session.repo_name}@${session.base_branch ?? "unknown"}`
         : "";
-      setResult(`Session created: ${session.id} — ${session.agent_count} agents launched${repoSummary}`);
+      setResult(`Session queued: ${session.id} — status ${session.status}${repoSummary}`);
       onSessionCreated?.(session.id);
       setRepoUrl("");
       setRepoAccessToken("");
@@ -274,7 +274,7 @@ export function NewSessionForm({ onSessionCreated, currentUserEmail }: NewSessio
           disabled={loading}
           className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 rounded-lg text-sm font-medium transition-colors"
         >
-          {loading ? "Launching session..." : "Launch Session"}
+          {loading ? "Queueing session..." : "Launch Session"}
         </button>
         {error && <p className="text-red-400 text-sm">{error}</p>}
         {result && <p className="text-green-400 text-sm">{result}</p>}

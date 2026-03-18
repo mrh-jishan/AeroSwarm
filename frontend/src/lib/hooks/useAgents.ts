@@ -12,15 +12,11 @@ import type { AgentSummary } from "../types";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export function useAgents(sessionId?: string) {
-  const url = sessionId
-    ? `${API_BASE}/api/sessions/${sessionId}/agents`
-    : null;
-
   const { data, error, isLoading } = useSWR<AgentSummary[]>(
-    url,
+    sessionId ? `session-agents:${sessionId}` : null,
     () => fetchAgents(sessionId!),
     {
-    refreshInterval: 3000,
+      refreshInterval: 3000,
     },
   );
 

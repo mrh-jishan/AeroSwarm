@@ -61,6 +61,7 @@ services:
       context: ../../backend
       dockerfile: Dockerfile
     container_name: aeroswarm-backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     environment:
       DATABASE_URL: postgresql+asyncpg://aeroswarm:aeroswarm_dev_secret@postgres:5432/aeroswarm
       REDIS_URL: redis://redis:6379
@@ -78,12 +79,41 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/ready >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
     networks:
       - aeroswarm-net
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.backend.rule=Host(`api.aeroswarm.localhost`)"
       - "traefik.http.services.backend.loadbalancer.server.port=8000"
+
+  worker:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: aeroswarm-worker
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aeroswarm:aeroswarm_dev_secret@postgres:5432/aeroswarm
+      REDIS_URL: redis://redis:6379
+      DOCKER_HOST: unix:///var/run/docker.sock
+      REPO_BASE_PATH: /repos
+      SECRET_KEY: change_me_in_production
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - repos_volume:/repos
+      - ../../backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - aeroswarm-net
 
 volumes:
   postgres_data:

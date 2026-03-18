@@ -7,6 +7,7 @@
 
 import { AgentCard } from "./AgentCard";
 import { useAgents } from "@/lib/hooks/useAgents";
+import { useSession } from "@/lib/hooks/useSession";
 
 interface AgentGridProps {
   sessionId?: string;
@@ -14,6 +15,7 @@ interface AgentGridProps {
 
 export function AgentGrid({ sessionId }: AgentGridProps) {
   const { agents, isLoading, error } = useAgents(sessionId);
+  const { session } = useSession(sessionId);
 
   if (!sessionId) {
     return (
@@ -40,6 +42,22 @@ export function AgentGrid({ sessionId }: AgentGridProps) {
   }
 
   if (!agents || agents.length === 0) {
+    if (session?.status === "queued" || session?.status === "planning") {
+      return (
+        <div className="border border-dashed border-blue-800 bg-blue-950/30 rounded-xl p-12 text-center text-blue-200">
+          Session is {session.status}. AeroSwarm is preparing the repo and launching agents.
+        </div>
+      );
+    }
+
+    if (session?.status === "failed") {
+      return (
+        <div className="border border-red-900 bg-red-950/40 text-red-300 rounded-xl p-6 text-sm">
+          Session failed: {session.error_message || "Unknown error"}
+        </div>
+      );
+    }
+
     return (
       <div className="border border-dashed border-gray-700 rounded-xl p-12 text-center text-gray-500">
         No active agents. Start a session above to spawn agents.

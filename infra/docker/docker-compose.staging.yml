@@ -1,0 +1,122 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aeroswarm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aeroswarm
+      POSTGRES_USER: aeroswarm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aeroswarm_staging_secret}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - aeroswarm-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aeroswarm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: aeroswarm-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - aeroswarm-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: aeroswarm-backend
+    restart: unless-stopped
+    env_file:
+      - ../../backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aeroswarm:${POSTGRES_PASSWORD:-aeroswarm_staging_secret}@postgres:5432/aeroswarm
+      REDIS_URL: redis://redis:6379
+      DOCKER_HOST: unix:///var/run/docker.sock
+      REPO_BASE_PATH: /repos
+      RUN_MIGRATIONS_ON_STARTUP: "true"
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      DOCKER_AGENT_IMAGE: ${DOCKER_AGENT_IMAGE:-aeroswarm-agent:staging}
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - repos_volume:/repos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/ready >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks:
+      - aeroswarm-net
+
+  worker:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: aeroswarm-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - ../../backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aeroswarm:${POSTGRES_PASSWORD:-aeroswarm_staging_secret}@postgres:5432/aeroswarm
+      REDIS_URL: redis://redis:6379
+      DOCKER_HOST: unix:///var/run/docker.sock
+      REPO_BASE_PATH: /repos
+      DOCKER_AGENT_IMAGE: ${DOCKER_AGENT_IMAGE:-aeroswarm-agent:staging}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - repos_volume:/repos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - aeroswarm-net
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    container_name: aeroswarm-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - aeroswarm-net
+
+volumes:
+  postgres_data:
+  repos_volume:
+
+networks:
+  aeroswarm-net:
+    driver: bridge

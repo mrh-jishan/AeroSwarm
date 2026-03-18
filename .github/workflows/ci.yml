@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: aeroswarm
+          POSTGRES_USER: aeroswarm
+          POSTGRES_PASSWORD: aeroswarm_dev_secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aeroswarm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://aeroswarm:aeroswarm_dev_secret@127.0.0.1:5432/aeroswarm
+      REDIS_URL: redis://127.0.0.1:6379
+      SECRET_KEY: ci-secret-key
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pip install poetry==1.8.3
+
+      - name: Install backend dependencies
+        run: poetry install --with dev
+
+      - name: Compile backend sources
+        run: poetry run python -m compileall app tests alembic
+
+      - name: Lint backend
+        run: poetry run ruff check app tests
+
+      - name: Run backend tests
+        run: poetry run python -m pytest tests -q
+
+      - name: Validate migrations
+        run: poetry run alembic upgrade head
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Build frontend
+        run: npm run build

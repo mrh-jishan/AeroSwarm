@@ -14,6 +14,7 @@ import type { AgentSummary } from "@/lib/types";
 import {
   approveMergeRequest,
   createMergeRequest,
+  fetchMergeRequest,
   rejectMergeRequest,
 } from "@/lib/api";
 
@@ -37,12 +38,26 @@ export function AgentCard({ agent }: AgentCardProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<"merge" | "reject" | null>(null);
 
+  async function waitForMergeRequest(mrId: string) {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const mr = await fetchMergeRequest(mrId);
+      if (!["queued", "running"].includes(mr.status)) {
+        return mr;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    throw new Error("Timed out waiting for merge preflight to finish.");
+  }
+
   async function handleMerge() {
     setActionLoading("merge");
     setActionError(null);
 
     try {
-      const mr = await createMergeRequest(agent.taskId);
+      const createdMr = await createMergeRequest(agent.taskId);
+      const mr = ["queued", "running"].includes(createdMr.status)
+        ? await waitForMergeRequest(createdMr.merge_request_id)
+        : createdMr;
       if (!mr.ready_to_merge) {
         const failedChecks = mr.checks.filter((check) => check.status === "failed");
         const details = failedChecks.length > 0
@@ -50,7 +65,7 @@ export function AgentCard({ agent }: AgentCardProps) {
               const output = check.output ? `\n${check.output}` : "";
               return `${check.label}: ${check.summary}${output}`;
             }).join("\n\n")
-          : "Preflight checks did not pass.";
+          : mr.error_message || "Preflight checks did not pass.";
         throw new Error(details);
       }
       await approveMergeRequest(mr.merge_request_id, "dashboard-user");

@@ -30,7 +30,7 @@ cd infra/docker
 docker compose up -d
 ```
 
-This starts: **PostgreSQL**, **Redis**, **Traefik**, and the **FastAPI backend**.
+This starts: **PostgreSQL**, **Redis**, **Traefik**, the **FastAPI backend**, and the **background worker**.
 
 ### 2. Run database migrations
 
@@ -71,7 +71,7 @@ docker build -t aeroswarm-agent:latest .
 ```
 AeroSwarm/
 ├── AeroSwarm PRD.md          # ← Product Requirements Document (source of truth)
-├── frontend/                 # Next.js 14 — Grid Dashboard, Terminal panels, VFS editor
+├── frontend/                 # Next.js 16 — Grid Dashboard, Terminal panels, VFS editor
 ├── backend/                  # FastAPI — Orchestrator, Docker Manager, Git Manager, WebSocket streaming
 ├── agent-engine/             # LangGraph worker — runs inside each Docker container
 ├── infra/
@@ -95,6 +95,12 @@ AeroSwarm/
 See [AeroSwarm PRD.md](AeroSwarm%20PRD.md) for the full product requirements and [docs/INITIAL_INVESTIGATION.md](docs/INITIAL_INVESTIGATION.md) for the technical investigation.
 
 For live GitHub OAuth, GitHub App installation, PR sync, and webhook validation, use [docs/GITHUB_LIVE_VALIDATION.md](docs/GITHUB_LIVE_VALIDATION.md).
+
+For deployment and go-live checks, use [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md).
+
+For a production-like local or staging stack with frontend, backend, worker, Postgres, and Redis, use [docs/STAGING_DEPLOYMENT.md](docs/STAGING_DEPLOYMENT.md).
+
+For GitHub Actions deployment to your own SSH-accessible machine, use [docs/GITHUB_SSH_DEPLOY.md](docs/GITHUB_SSH_DEPLOY.md).
 
 ## Shared AI Context
 
