@@ -9,7 +9,8 @@ This is the shortest full local development path for AeroSwarm.
 - `worker`: background job processor
 - `postgres`: primary database on `localhost:5432`
 - `redis`: cache / pub-sub on `localhost:6379`
-- `traefik`: local reverse proxy dashboard on `http://localhost:8080`
+- `traefik`: local reverse proxy on `http://localhost:8081`
+- `traefik dashboard`: `http://localhost:8080`
 - `aeroswarm-agent:latest`: worker image launched dynamically for task execution
 
 ## Prerequisites
@@ -59,6 +60,7 @@ Start the frontend dev server in a separate terminal:
 - Backend: `http://localhost:8000`
 - Health: `http://localhost:8000/health`
 - Ready: `http://localhost:8000/ready`
+- Traefik proxy: `http://localhost:8081`
 - Traefik dashboard: `http://localhost:8080`
 
 ## Useful Commands
@@ -112,6 +114,14 @@ Frontend env defaults live in [frontend/.env.example](/Users/robin-hassan/Deskto
 
 For local development, the generated defaults are enough to boot the stack. Add OpenAI and GitHub credentials only when you want live model or GitHub integration paths.
 
+## Port Overrides
+
+If `8081` or `8080` are also occupied on your machine, override them when starting the stack:
+
+```bash
+TRAEFIK_WEB_PORT=8091 TRAEFIK_DASHBOARD_PORT=8092 ./scripts/local_dev.sh up
+```
+
 ## Common Problems
 
 ### `poetry: command not found`
@@ -128,6 +138,16 @@ Rebuild the agent image:
 
 ```bash
 docker build -t aeroswarm-agent:latest agent-engine
+```
+
+### `bind: address already in use`
+
+The local reverse proxy no longer uses port `80` by default. It uses `8081`.
+
+If that still conflicts on your machine, start with custom ports:
+
+```bash
+TRAEFIK_WEB_PORT=8091 TRAEFIK_DASHBOARD_PORT=8092 ./scripts/local_dev.sh up
 ```
 
 ### Migrations fail

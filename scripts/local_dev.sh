@@ -8,6 +8,8 @@ AGENT_DIR="$ROOT_DIR/agent-engine"
 COMPOSE_DIR="$ROOT_DIR/infra/docker"
 COMPOSE_FILE="$COMPOSE_DIR/docker-compose.yml"
 AGENT_IMAGE="${DOCKER_AGENT_IMAGE:-aeroswarm-agent:latest}"
+TRAEFIK_WEB_PORT="${TRAEFIK_WEB_PORT:-8081}"
+TRAEFIK_DASHBOARD_PORT="${TRAEFIK_DASHBOARD_PORT:-8080}"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -68,7 +70,8 @@ show_status() {
   echo "Backend:  http://localhost:8000"
   echo "Health:   http://localhost:8000/health"
   echo "Ready:    http://localhost:8000/ready"
-  echo "Traefik:  http://localhost:8080"
+  echo "Proxy:    http://localhost:${TRAEFIK_WEB_PORT}"
+  echo "Traefik:  http://localhost:${TRAEFIK_DASHBOARD_PORT}"
 }
 
 start_frontend_dev() {
