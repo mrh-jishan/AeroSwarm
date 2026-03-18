@@ -100,6 +100,8 @@ For deployment and go-live checks, use [docs/RELEASE_CHECKLIST.md](docs/RELEASE_
 
 For a production-like local or staging stack with frontend, backend, worker, Postgres, and Redis, use [docs/STAGING_DEPLOYMENT.md](docs/STAGING_DEPLOYMENT.md).
 
+For full local development setup and the one-command startup script, use [docs/LOCAL_STARTUP.md](docs/LOCAL_STARTUP.md).
+
 For GitHub Actions deployment to your own SSH-accessible machine, use [docs/GITHUB_SSH_DEPLOY.md](docs/GITHUB_SSH_DEPLOY.md).
 
 ## Shared AI Context
