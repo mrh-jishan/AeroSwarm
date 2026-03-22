@@ -10,19 +10,27 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { AgentGrid } from "@/components/AgentGrid";
 import { AgentWorkspace } from "@/components/AgentWorkspace";
-import { AuthPanel } from "@/components/AuthPanel";
 import { NewSessionForm } from "@/components/NewSessionForm";
+import { ProfileSettingsPanel } from "@/components/ProfileSettingsPanel";
 import { SessionSettingsPanel } from "@/components/SessionSettingsPanel";
 import { fetchMe, fetchSessionAudit, listSessions, logout, retrySession, stopSession } from "@/lib/api";
 import { useSession } from "@/lib/hooks/useSession";
-import type { SessionAuditEvent, SessionResponse, User } from "@/lib/types";
+import { useWebSocketToken } from "@/lib/hooks/useWebSocketToken";
+import type { AgentSummary, SessionAuditEvent, SessionResponse, User } from "@/lib/types";
 
-type DashboardRouteView = "dashboard" | "new" | "history" | "session" | "settings" | "agent";
+type DashboardRouteView = "dashboard" | "new" | "history" | "session" | "settings" | "profile" | "agent";
 
 const SESSION_STORAGE_KEY = "aeroswarm.dashboard.session";
+const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
 const ACTIVE_SESSION_STATUSES = new Set(["queued", "planning", "running", "merging"]);
 const FAILED_SESSION_STATUSES = new Set(["failed", "error"]);
-const COMPLETED_SESSION_STATUSES = new Set(["done", "merged", "completed"]);
+const COMPLETED_SESSION_STATUSES = new Set(["done", "merged", "completed", "stopped"]);
+
+interface SessionDetailStreamPayload {
+  session: SessionResponse;
+  agents: AgentSummary[];
+  audit_events: SessionAuditEvent[];
+}
 
 interface DashboardAppProps {
   routeView: DashboardRouteView;
@@ -67,6 +75,12 @@ function truncateText(value: string, maxLength: number) {
   }
 
   return `${value.slice(0, maxLength - 1)}…`;
+}
+
+function buildWebSocketUrl(path: string, token: string) {
+  const url = new URL(`${WS_BASE}${path}`);
+  url.searchParams.set("token", token);
+  return url.toString();
 }
 
 function DashboardNavButton({
@@ -235,6 +249,7 @@ export function DashboardApp({
   const [retryingSessionId, setRetryingSessionId] = useState<string | null>(null);
   const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
+  const { token: websocketToken, refreshToken: refreshWebSocketToken } = useWebSocketToken(Boolean(currentUser));
 
   useEffect(() => {
     let cancelled = false;
@@ -264,6 +279,13 @@ export function DashboardApp({
   }, []);
 
   useEffect(() => {
+    if (!authResolved || currentUser) {
+      return;
+    }
+    router.replace("/login");
+  }, [authResolved, currentUser, router]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -285,11 +307,6 @@ export function DashboardApp({
   } = useSWR<SessionResponse[]>(
     currentUser ? "sessions-history" : null,
     listSessions,
-    {
-      refreshInterval: (items) => (
-        items?.some((session) => ACTIVE_SESSION_STATUSES.has(session.status)) ? 5000 : 15000
-      ),
-    }
   );
 
   useEffect(() => {
@@ -311,11 +328,6 @@ export function DashboardApp({
   const { data: auditEvents = [], isLoading: auditLoading } = useSWR<SessionAuditEvent[]>(
     shouldLoadSession ? `session-audit:${selectedSessionId}` : null,
     () => fetchSessionAudit(selectedSessionId!),
-    {
-      refreshInterval: () => (
-        activeSession && ACTIVE_SESSION_STATUSES.has(activeSession.status) ? 5000 : 0
-      ),
-    }
   );
 
   const displayedSession = activeSession ?? sessions.find((session) => session.id === selectedSessionId);
@@ -360,6 +372,11 @@ export function DashboardApp({
   function openSettings() {
     setPageError(null);
     router.push("/settings");
+  }
+
+  function openProfile() {
+    setPageError(null);
+    router.push("/profile");
   }
 
   function openSession(nextSessionId: string) {
@@ -407,22 +424,129 @@ export function DashboardApp({
     }
   }
 
+  useEffect(() => {
+    if (!currentUser || !websocketToken) {
+      return;
+    }
+
+    let cancelled = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      if (cancelled) {
+        return;
+      }
+
+      socket = new WebSocket(buildWebSocketUrl("/api/sessions/stream", websocketToken));
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as SessionResponse[];
+          void mutate("sessions-history", payload, { revalidate: false });
+        } catch {
+          // Ignore malformed stream messages and keep the current cache.
+        }
+      };
+
+      socket.onerror = () => {
+        socket?.close();
+      };
+
+      socket.onclose = () => {
+        if (cancelled) {
+          return;
+        }
+        void refreshWebSocketToken();
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      socket?.close();
+    };
+  }, [currentUser, mutate, refreshWebSocketToken, websocketToken]);
+
+  useEffect(() => {
+    if (!currentUser || !websocketToken || routeView !== "session" || !selectedSessionId) {
+      return;
+    }
+
+    let cancelled = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      if (cancelled) {
+        return;
+      }
+
+      socket = new WebSocket(
+        buildWebSocketUrl(`/api/sessions/${selectedSessionId}/stream`, websocketToken),
+      );
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as SessionDetailStreamPayload;
+          void mutate(`session:${selectedSessionId}`, payload.session, { revalidate: false });
+          void mutate(`session-agents:${selectedSessionId}`, payload.agents, { revalidate: false });
+          void mutate(`session-audit:${selectedSessionId}`, payload.audit_events, { revalidate: false });
+          void mutate(
+            "sessions-history",
+            (currentSessions: SessionResponse[] = []) =>
+              currentSessions.map((session) =>
+                session.id === payload.session.id ? payload.session : session
+              ),
+            { revalidate: false },
+          );
+        } catch {
+          // Ignore malformed stream messages and keep the current cache.
+        }
+      };
+
+      socket.onerror = () => {
+        socket?.close();
+      };
+
+      socket.onclose = () => {
+        if (cancelled) {
+          return;
+        }
+        void refreshWebSocketToken();
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      socket?.close();
+    };
+  }, [currentUser, mutate, refreshWebSocketToken, routeView, selectedSessionId, websocketToken]);
+
   if (!authResolved) {
     return <main className="min-h-screen bg-gray-950 p-6 text-gray-100">Loading...</main>;
   }
 
   if (!currentUser) {
-    return (
-      <main className="min-h-screen bg-gray-950 p-6 text-gray-100 flex items-center justify-center">
-        <AuthPanel onAuthenticated={setCurrentUser} />
-      </main>
-    );
+    return <main className="min-h-screen bg-gray-950 p-6 text-gray-100">Redirecting to sign in...</main>;
   }
 
   const onDashboardPage = routeView === "dashboard";
   const onNewSessionPage = routeView === "new";
   const onHistoryPage = routeView === "history" || routeView === "session";
   const onSettingsPage = routeView === "settings";
+  const onProfilePage = routeView === "profile";
 
   return (
     <main className="min-h-screen bg-gray-950 p-6 text-gray-100">
@@ -463,9 +587,18 @@ export function DashboardApp({
             active={onSettingsPage}
             onClick={openSettings}
           />
+          <DashboardNavButton
+            label="Profile"
+            active={onProfilePage}
+            onClick={openProfile}
+          />
         </nav>
 
-        <div className="justify-self-end">
+        <div className="flex items-center gap-3 justify-self-end">
+          <div className="hidden rounded-full border border-gray-800 bg-gray-900/80 px-4 py-2 text-right sm:block">
+            <p className="text-sm font-medium text-white">{currentUser.full_name || currentUser.email}</p>
+            <p className="text-xs text-gray-500">{currentUser.email}</p>
+          </div>
           <button
             onClick={async () => {
               await logout();
@@ -603,6 +736,10 @@ export function DashboardApp({
             <section className="rounded-2xl border border-gray-800 bg-gray-900/80 p-6">
               <SessionSettingsPanel currentUserEmail={currentUser.email} />
             </section>
+          )}
+
+          {routeView === "profile" && (
+            <ProfileSettingsPanel user={currentUser} onUserUpdated={setCurrentUser} />
           )}
 
           {routeView === "agent" && agentId && (

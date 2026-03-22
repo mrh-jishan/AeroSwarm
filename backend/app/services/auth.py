@@ -54,9 +54,15 @@ class AuthService:
         )
         return hmac.compare_digest(actual, expected)
 
-    def create_access_token(self, user_id: uuid.UUID, email: str) -> str:
+    def create_access_token(
+        self,
+        user_id: uuid.UUID,
+        email: str,
+        *,
+        expires_in_minutes: int | None = None,
+    ) -> str:
         expires_at = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+            minutes=expires_in_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
         payload = {
             "sub": str(user_id),

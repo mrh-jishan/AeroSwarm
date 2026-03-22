@@ -1,18 +1,27 @@
 """Sessions API — create session, trigger orchestration, list sessions."""
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    WebSocketException,
+    status,
+)
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
-from app.core.security import AuthContext, require_user_context
+from app.core.database import AsyncSessionLocal, get_db
+from app.core.security import AuthContext, get_websocket_auth_context, require_user_context
 from app.models.base import Agent, AuditEvent, BackgroundJob, ProviderConnection, Session, Task
 from app.services.audit import AuditService
 from app.services.crypto import CredentialCryptoService
@@ -22,7 +31,7 @@ from app.services.llm_factory import default_model_for_provider, normalize_llm_p
 from app.services.provider_connections import ProviderConnectionService
 from app.services.vcs import RepoIdentity, VcsService
 
-router = APIRouter(dependencies=[Depends(require_user_context)])
+router = APIRouter()
 audit = AuditService()
 crypto = CredentialCryptoService()
 vcs = VcsService()
@@ -32,6 +41,7 @@ ACTIVE_SESSION_STATUSES = {"queued", "planning", "running", "merging"}
 STOPPABLE_TASK_STATUSES = {"pending", "running", "merging"}
 STOPPABLE_AGENT_STATUSES = {"initializing", "running", "idle", "error"}
 CANCELLABLE_JOB_STATUSES = {"queued", "running"}
+SESSION_STREAM_INTERVAL_SECONDS = 2
 
 
 class CreateSessionRequest(BaseModel):
@@ -172,6 +182,126 @@ def _build_agent_preview_url(port: int | None) -> str | None:
     return f"{base_url}:{port}"
 
 
+def _serialize_session_agent(task: Task, agent: Agent | None) -> SessionAgentResponse:
+    return SessionAgentResponse(
+        id=agent.id if agent else task.id,
+        taskId=task.id,
+        taskTitle=task.title,
+        scopeDir=task.scope_dir,
+        status=agent.status if agent else "initializing",
+        port=agent.port if agent else None,
+        previewUrl=_build_agent_preview_url(agent.port if agent else None),
+    )
+
+
+def _serialize_audit_event(event: AuditEvent) -> AuditEventResponse:
+    return AuditEventResponse(
+        id=event.id,
+        action=event.action,
+        actor=event.actor,
+        details=json.loads(event.details) if event.details else None,
+        created_at=event.created_at.isoformat(),
+    )
+
+
+async def _get_session_for_user(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> Session | None:
+    result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            Session.owner_user_id == user_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _serialize_sessions_for_user(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+) -> list[SessionResponse]:
+    result = await db.execute(
+        select(Session)
+        .where(Session.owner_user_id == user_id)
+        .order_by(Session.created_at.desc())
+    )
+    sessions = result.scalars().all()
+    session_ids = [session.id for session in sessions]
+    task_counts, agent_counts = await _load_counts_for_sessions(db, session_ids)
+
+    return [
+        _serialize_session(
+            session,
+            task_count=task_counts.get(session.id, 0),
+            agent_count=agent_counts.get(session.id, 0),
+        )
+        for session in sessions
+    ]
+
+
+async def _serialize_session_agents(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+) -> list[SessionAgentResponse]:
+    tasks_result = await db.execute(select(Task).where(Task.session_id == session_id))
+    tasks = tasks_result.scalars().all()
+
+    task_ids = [task.id for task in tasks]
+    if not task_ids:
+        return []
+
+    agents_result = await db.execute(select(Agent).where(Agent.task_id.in_(task_ids)))
+    agents = agents_result.scalars().all()
+    agents_by_task_id = {agent.task_id: agent for agent in agents}
+
+    return [_serialize_session_agent(task, agents_by_task_id.get(task.id)) for task in tasks]
+
+
+async def _serialize_session_audit_events(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+) -> list[AuditEventResponse]:
+    result = await db.execute(
+        select(AuditEvent)
+        .where(AuditEvent.session_id == session_id)
+        .order_by(AuditEvent.created_at.desc())
+    )
+    events = result.scalars().all()
+    return [_serialize_audit_event(event) for event in events]
+
+
+async def _serialize_session_stream_payload(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> dict[str, object] | None:
+    session = await _get_session_for_user(db, session_id=session_id, user_id=user_id)
+    if session is None:
+        return None
+
+    task_counts, agent_counts = await _load_counts_for_sessions(db, [session_id])
+    session_payload = _serialize_session(
+        session,
+        task_count=task_counts.get(session_id, 0),
+        agent_count=agent_counts.get(session_id, 0),
+    )
+    agents_payload = await _serialize_session_agents(db, session_id=session_id)
+    audit_payload = await _serialize_session_audit_events(db, session_id=session_id)
+
+    return {
+        "session": session_payload.model_dump(mode="json"),
+        "agents": [agent.model_dump(mode="json") for agent in agents_payload],
+        "audit_events": [event.model_dump(mode="json") for event in audit_payload],
+    }
+
+
 async def _queue_session_bootstrap(
     db: AsyncSession,
     *,
@@ -217,23 +347,33 @@ async def list_sessions(
     auth: AuthContext = Depends(require_user_context),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Session)
-        .where(Session.owner_user_id == auth.user_id)
-        .order_by(Session.created_at.desc())
-    )
-    sessions = result.scalars().all()
-    session_ids = [session.id for session in sessions]
-    task_counts, agent_counts = await _load_counts_for_sessions(db, session_ids)
+    return await _serialize_sessions_for_user(db, user_id=auth.user_id)
 
-    return [
-        _serialize_session(
-            session,
-            task_count=task_counts.get(session.id, 0),
-            agent_count=agent_counts.get(session.id, 0),
-        )
-        for session in sessions
-    ]
+
+@router.websocket("/stream")
+async def stream_sessions(websocket: WebSocket):
+    auth = await get_websocket_auth_context(websocket)
+    if not auth.is_user or auth.user_id is None:
+        raise WebSocketException(code=1008, reason="User authentication required")
+
+    await websocket.accept()
+    last_payload = ""
+    try:
+        while True:
+            async with AsyncSessionLocal() as db:
+                sessions = await _serialize_sessions_for_user(db, user_id=auth.user_id)
+                payload = json.dumps(
+                    [session.model_dump(mode="json") for session in sessions],
+                    sort_keys=True,
+                )
+
+            if payload != last_payload:
+                await websocket.send_text(payload)
+                last_payload = payload
+
+            await asyncio.sleep(SESSION_STREAM_INTERVAL_SECONDS)
+    except WebSocketDisconnect:
+        pass
 
 
 @router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
@@ -443,13 +583,7 @@ async def get_session(
     auth: AuthContext = Depends(require_user_context),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.owner_user_id == auth.user_id,
-        )
-    )
-    session = result.scalar_one_or_none()
+    session = await _get_session_for_user(db, session_id=session_id, user_id=auth.user_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -468,43 +602,10 @@ async def list_session_agents(
     auth: AuthContext = Depends(require_user_context),
     db: AsyncSession = Depends(get_db),
 ):
-    session_result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.owner_user_id == auth.user_id,
-        )
-    )
-    session = session_result.scalar_one_or_none()
+    session = await _get_session_for_user(db, session_id=session_id, user_id=auth.user_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    tasks_result = await db.execute(select(Task).where(Task.session_id == session_id))
-    tasks = tasks_result.scalars().all()
-
-    task_ids = [task.id for task in tasks]
-    if not task_ids:
-        return []
-
-    agents_result = await db.execute(select(Agent).where(Agent.task_id.in_(task_ids)))
-    agents = agents_result.scalars().all()
-    agents_by_task_id = {agent.task_id: agent for agent in agents}
-
-    response = []
-    for task in tasks:
-        agent = agents_by_task_id.get(task.id)
-        response.append(
-            SessionAgentResponse(
-                id=agent.id if agent else task.id,
-                taskId=task.id,
-                taskTitle=task.title,
-                scopeDir=task.scope_dir,
-                status=agent.status if agent else "initializing",
-                port=agent.port if agent else None,
-                previewUrl=_build_agent_preview_url(agent.port if agent else None),
-            )
-        )
-
-    return response
+    return await _serialize_session_agents(db, session_id=session_id)
 
 
 @router.get("/{session_id}/audit", response_model=list[AuditEventResponse])
@@ -513,30 +614,37 @@ async def list_session_audit_events(
     auth: AuthContext = Depends(require_user_context),
     db: AsyncSession = Depends(get_db),
 ):
-    session_result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.owner_user_id == auth.user_id,
-        )
-    )
-    session = session_result.scalar_one_or_none()
+    session = await _get_session_for_user(db, session_id=session_id, user_id=auth.user_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    return await _serialize_session_audit_events(db, session_id=session_id)
 
-    result = await db.execute(
-        select(AuditEvent)
-        .where(AuditEvent.session_id == session_id)
-        .order_by(AuditEvent.created_at.desc())
-    )
-    events = result.scalars().all()
 
-    return [
-        AuditEventResponse(
-            id=event.id,
-            action=event.action,
-            actor=event.actor,
-            details=json.loads(event.details) if event.details else None,
-            created_at=event.created_at.isoformat(),
-        )
-        for event in events
-    ]
+@router.websocket("/{session_id}/stream")
+async def stream_session_detail(session_id: uuid.UUID, websocket: WebSocket):
+    auth = await get_websocket_auth_context(websocket)
+    if not auth.is_user or auth.user_id is None:
+        raise WebSocketException(code=1008, reason="User authentication required")
+
+    await websocket.accept()
+    last_payload = ""
+    try:
+        while True:
+            async with AsyncSessionLocal() as db:
+                payload_data = await _serialize_session_stream_payload(
+                    db,
+                    session_id=session_id,
+                    user_id=auth.user_id,
+                )
+                if payload_data is None:
+                    await websocket.close(code=1008, reason="Session not found")
+                    return
+                payload = json.dumps(payload_data, sort_keys=True)
+
+            if payload != last_payload:
+                await websocket.send_text(payload)
+                last_payload = payload
+
+            await asyncio.sleep(SESSION_STREAM_INTERVAL_SECONDS)
+    except WebSocketDisconnect:
+        pass

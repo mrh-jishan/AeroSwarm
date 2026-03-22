@@ -1,69 +1,92 @@
 /**
- * AgentTerminal — xterm.js terminal panel connected to backend WebSocket.
- * Streams real-time agent stdout from Redis via FastAPI /api/agents/:id/logs
+ * AgentTerminal — lightweight websocket log console for agent output.
  */
 
 "use client";
 
-import { useEffect, useRef } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
-import { getApiToken } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useWebSocketToken } from "@/lib/hooks/useWebSocketToken";
 
 const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
+const MAX_LINES = 400;
 
 interface AgentTerminalProps {
   agentId: string;
 }
 
+function stripAnsi(value: string) {
+  return value.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
+}
+
 export default function AgentTerminal({ agentId }: AgentTerminalProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const [lines, setLines] = useState<string[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { token } = useWebSocketToken();
+
+  const renderedText = useMemo(() => lines.join("\n"), [lines]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      return;
+    }
+    scroller.scrollTop = scroller.scrollHeight;
+  }, [renderedText]);
 
-    const term = new Terminal({
-      theme: { background: "#000000", foreground: "#d4d4d4" },
-      fontSize: 12,
-      fontFamily: "monospace",
-      rows: 12,
-      cursorBlink: false,
-    });
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(containerRef.current);
-    fitAddon.fit();
-    termRef.current = term;
-
-    const token = getApiToken();
-    const url = new URL(`${WS_BASE}/api/agents/${agentId}/logs`);
-    if (token) {
-      url.searchParams.set("token", token);
+  useEffect(() => {
+    if (!token) {
+      return;
     }
 
-    const ws = new WebSocket(url.toString());
-    wsRef.current = ws;
+    let active = true;
+    const url = new URL(`${WS_BASE}/api/agents/${agentId}/logs`);
+    url.searchParams.set("token", token);
+    const socket = new WebSocket(url.toString());
 
-    ws.onmessage = (e) => {
-      term.writeln(e.data);
+    const appendLine = (message: string) => {
+      if (!active) {
+        return;
+      }
+      const cleanLine = stripAnsi(message).replace(/\r/g, "").trimEnd();
+      setLines((current) => {
+        const next = cleanLine ? [...current, cleanLine] : current;
+        return next.slice(-MAX_LINES);
+      });
     };
 
-    ws.onerror = () => {
-      term.writeln("\r\n\x1b[31m[Connection error]\x1b[0m");
+    socket.onopen = () => {
+      appendLine("[connected]");
     };
 
-    ws.onclose = () => {
-      term.writeln("\r\n\x1b[33m[Stream closed]\x1b[0m");
+    socket.onmessage = (event) => {
+      const chunks = String(event.data).split("\n");
+      for (const chunk of chunks) {
+        appendLine(chunk);
+      }
+    };
+
+    socket.onerror = () => {
+      appendLine("[connection error]");
+    };
+
+    socket.onclose = () => {
+      appendLine("[stream closed]");
     };
 
     return () => {
-      ws.close();
-      term.dispose();
+      active = false;
+      socket.close();
     };
-  }, [agentId]);
+  }, [agentId, token]);
 
-  return <div ref={containerRef} className="w-full h-full p-1" />;
+  return (
+    <div
+      ref={scrollRef}
+      className="h-full min-h-[200px] overflow-auto bg-black px-4 py-3 font-mono text-xs leading-6 text-emerald-300"
+    >
+      <pre className="whitespace-pre-wrap break-words">
+        {renderedText || (token ? "Connecting to worker log stream..." : "Waiting for log stream...")}
+      </pre>
+    </div>
+  );
 }

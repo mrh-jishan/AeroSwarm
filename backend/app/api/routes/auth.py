@@ -34,6 +34,11 @@ def _normalize_email(value: str) -> str:
 class RegisterRequest(BaseModel):
     email: str
     password: str = Field(min_length=8)
+    full_name: str = Field(min_length=2, max_length=255)
+    job_title: str | None = Field(default=None, max_length=255)
+    company_name: str | None = Field(default=None, max_length=255)
+    timezone: str | None = Field(default=None, max_length=100)
+    bio: str | None = Field(default=None, max_length=2000)
 
 
 class LoginRequest(BaseModel):
@@ -44,6 +49,12 @@ class LoginRequest(BaseModel):
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str
+    full_name: str | None = None
+    job_title: str | None = None
+    company_name: str | None = None
+    timezone: str | None = None
+    bio: str | None = None
+    created_at: str
 
 
 class AuthResponse(BaseModel):
@@ -75,8 +86,40 @@ class PasswordResetRequestResponse(BaseModel):
     reset_token: str | None = None
 
 
+class UpdateProfileRequest(BaseModel):
+    full_name: str = Field(min_length=2, max_length=255)
+    job_title: str | None = Field(default=None, max_length=255)
+    company_name: str | None = Field(default=None, max_length=255)
+    timezone: str | None = Field(default=None, max_length=100)
+    bio: str | None = Field(default=None, max_length=2000)
+
+
+class WebSocketTokenResponse(BaseModel):
+    token: str
+
+
 def _client_host(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _serialize_user(user: User) -> UserResponse:
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        job_title=user.job_title,
+        company_name=user.company_name,
+        timezone=user.timezone,
+        bio=user.bio,
+        created_at=user.created_at.isoformat(),
+    )
 
 
 def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
@@ -139,9 +182,9 @@ def _build_auth_response(user: User, access_token: str, refresh_token: str) -> A
         return AuthResponse(
             access_token=access_token,
             refresh_token=refresh_token,
-            user=UserResponse(id=user.id, email=user.email),
+            user=_serialize_user(user),
         )
-    return AuthResponse(user=UserResponse(id=user.id, email=user.email))
+    return AuthResponse(user=_serialize_user(user))
 
 
 async def _issue_auth_response(
@@ -193,6 +236,11 @@ async def register(
     user = User(
         email=email,
         password_hash=auth_service.hash_password(payload.password),
+        full_name=payload.full_name.strip(),
+        job_title=_normalize_optional_text(payload.job_title),
+        company_name=_normalize_optional_text(payload.company_name),
+        timezone=_normalize_optional_text(payload.timezone),
+        bio=_normalize_optional_text(payload.bio),
     )
     db.add(user)
     await db.flush()
@@ -348,4 +396,44 @@ async def me(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    return UserResponse(id=user.id, email=user.email)
+    return _serialize_user(user)
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(
+    payload: UpdateProfileRequest,
+    auth: AuthContext = Depends(require_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == auth.user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.full_name = payload.full_name.strip()
+    user.job_title = _normalize_optional_text(payload.job_title)
+    user.company_name = _normalize_optional_text(payload.company_name)
+    user.timezone = _normalize_optional_text(payload.timezone)
+    user.bio = _normalize_optional_text(payload.bio)
+    await db.commit()
+    await db.refresh(user)
+
+    return _serialize_user(user)
+
+
+@router.get("/ws-token", response_model=WebSocketTokenResponse)
+async def websocket_token(
+    auth: AuthContext = Depends(require_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == auth.user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    token = auth_service.create_access_token(
+        user.id,
+        user.email,
+        expires_in_minutes=15,
+    )
+    return WebSocketTokenResponse(token=token)

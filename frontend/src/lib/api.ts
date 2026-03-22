@@ -178,10 +178,23 @@ export function getGitHubAppInstallStartUrl(redirectPath = "/"): string {
 export async function register(payload: {
   email: string;
   password: string;
+  fullName: string;
+  jobTitle?: string;
+  companyName?: string;
+  timezone?: string;
+  bio?: string;
 }): Promise<AuthResponse> {
   return requestJson<AuthResponse>("/api/auth/register", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      email: payload.email,
+      password: payload.password,
+      full_name: payload.fullName,
+      job_title: payload.jobTitle || undefined,
+      company_name: payload.companyName || undefined,
+      timezone: payload.timezone || undefined,
+      bio: payload.bio || undefined,
+    }),
   });
 }
 
@@ -197,6 +210,30 @@ export async function login(payload: {
 
 export async function fetchMe(): Promise<User> {
   return requestJson<User>("/api/auth/me", { method: "GET" });
+}
+
+export async function fetchWebSocketToken(): Promise<string> {
+  const response = await requestJson<{ token: string }>("/api/auth/ws-token", { method: "GET" });
+  return response.token;
+}
+
+export async function updateMyProfile(payload: {
+  fullName: string;
+  jobTitle?: string;
+  companyName?: string;
+  timezone?: string;
+  bio?: string;
+}): Promise<User> {
+  return requestJson<User>("/api/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify({
+      full_name: payload.fullName,
+      job_title: payload.jobTitle || undefined,
+      company_name: payload.companyName || undefined,
+      timezone: payload.timezone || undefined,
+      bio: payload.bio || undefined,
+    }),
+  });
 }
 
 export async function refreshAccessToken(): Promise<AuthResponse> {

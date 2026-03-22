@@ -42,6 +42,12 @@ export interface SessionResponse {
 export interface User {
   id: string;
   email: string;
+  full_name?: string | null;
+  job_title?: string | null;
+  company_name?: string | null;
+  timezone?: string | null;
+  bio?: string | null;
+  created_at: string;
 }
 
 export interface SessionAuditEvent {
