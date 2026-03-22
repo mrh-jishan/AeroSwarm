@@ -113,10 +113,12 @@ async def require_user_context(
 
 
 async def require_internal_context(
-    auth: AuthContext = Depends(get_auth_context),
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> AuthContext:
     if not settings.API_BEARER_TOKEN:
         return AuthContext(actor="system", user_id=None, auth_type="internal")
+    auth = await get_auth_context(request, credentials)
     if auth.auth_type != "internal":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

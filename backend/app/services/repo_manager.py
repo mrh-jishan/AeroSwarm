@@ -52,6 +52,18 @@ class RepoManagerService:
         if session_root.exists():
             shutil.rmtree(session_root, ignore_errors=True)
 
+    def cleanup_session_repo_if_no_worktrees(self, session_id: uuid.UUID) -> bool:
+        session_root = self.get_session_root(session_id)
+        worktrees_root = session_root / "worktrees"
+
+        if worktrees_root.exists():
+            for child in worktrees_root.iterdir():
+                if child.is_dir():
+                    return False
+
+        self.cleanup_session_repo(session_id)
+        return True
+
     def build_authenticated_repo_url(
         self,
         repo_url: str,

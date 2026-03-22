@@ -180,19 +180,6 @@ export default function HomePage() {
               <Link href="/pricing" className="rounded-full border border-slate-700 px-5 py-3 text-sm text-slate-100 hover:border-slate-500">See Packaging</Link>
             </div>
           </div>
-          <div className="rounded-3xl border border-sky-400/20 bg-sky-400/5 px-8 py-10">
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-sky-300">Public Resources</p>
-            <div className="mt-6 flex flex-wrap gap-4">
-              <Link href="/security" className="rounded-full border border-slate-700 px-5 py-3 text-sm text-slate-100 hover:border-slate-500">Security</Link>
-              <Link href="/about" className="rounded-full border border-slate-700 px-5 py-3 text-sm text-slate-100 hover:border-slate-500">About</Link>
-              <Link href="/pricing" className="rounded-full border border-slate-700 px-5 py-3 text-sm text-slate-100 hover:border-slate-500">Pricing</Link>
-              <Link href="/demo" className="rounded-full border border-slate-700 px-5 py-3 text-sm text-slate-100 hover:border-slate-500">Request Pilot</Link>
-              <Link href="/faq" className="rounded-full border border-slate-700 px-5 py-3 text-sm text-slate-100 hover:border-slate-500">FAQ</Link>
-              <Link href="/privacy" className="rounded-full border border-slate-700 px-5 py-3 text-sm text-slate-100 hover:border-slate-500">Privacy</Link>
-              <Link href="/terms" className="rounded-full border border-slate-700 px-5 py-3 text-sm text-slate-100 hover:border-slate-500">Terms</Link>
-              <Link href="/contact" className="rounded-full border border-slate-700 px-5 py-3 text-sm text-slate-100 hover:border-slate-500">Contact</Link>
-            </div>
-          </div>
         </section>
       </main>
       <PublicFooter />

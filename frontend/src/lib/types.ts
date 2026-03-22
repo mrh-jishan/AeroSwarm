@@ -10,23 +10,46 @@ export interface AgentSummary {
   previewUrl: string | null;
 }
 
+export interface AgentDetail {
+  id: string;
+  session_id: string;
+  task_id: string;
+  task_title: string;
+  scope_dir: string;
+  status: "initializing" | "running" | "idle" | "stopped" | "error";
+  port: number | null;
+}
+
 export interface SessionResponse {
   id: string;
+  provider_connection_id?: string | null;
   repo_url: string;
   vcs_provider?: string | null;
   repo_owner?: string | null;
   repo_name?: string | null;
   base_branch?: string | null;
+  llm_provider: "openai" | "gemini";
+  manager_model: string;
+  agent_model: string;
   prompt: string;
   status: string;
   error_message?: string | null;
   task_count: number;
   agent_count: number;
+  created_at: string;
 }
 
 export interface User {
   id: string;
   email: string;
+}
+
+export interface SessionAuditEvent {
+  id: string;
+  action: string;
+  actor: string;
+  details?: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export interface PreflightCheck {
@@ -68,4 +91,13 @@ export interface ProviderConnection {
   auth_mode: string;
   account_login: string;
   installation_id?: number | null;
+}
+
+export interface GitHubRepoSuggestion {
+  owner: string;
+  name: string;
+  full_name: string;
+  default_branch: string;
+  html_url: string;
+  private: boolean;
 }

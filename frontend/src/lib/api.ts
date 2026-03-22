@@ -1,11 +1,14 @@
 /** API client helpers — thin wrappers over fetch. */
 
 import type {
+  AgentDetail,
   AgentSummary,
   AuthResponse,
+  GitHubRepoSuggestion,
   MergeRequestResponse,
   PasswordResetRequestResponse,
   ProviderConnection,
+  SessionAuditEvent,
   SessionResponse,
   User,
 } from "./types";
@@ -88,6 +91,9 @@ async function requestJson<T>(path: string, init: RequestInit = {}, retryOnAuth 
 export async function createSession(payload: {
   repoUrl: string;
   prompt: string;
+  llmProvider: "openai" | "gemini";
+  managerModel?: string;
+  agentModel?: string;
   providerConnectionId?: string;
   repoAccessToken?: string;
   repoUsername?: string;
@@ -97,6 +103,9 @@ export async function createSession(payload: {
     body: JSON.stringify({
       repo_url: payload.repoUrl,
       prompt: payload.prompt,
+      llm_provider: payload.llmProvider,
+      manager_model: payload.managerModel || undefined,
+      agent_model: payload.agentModel || undefined,
       provider_connection_id: payload.providerConnectionId || undefined,
       repo_access_token: payload.repoAccessToken || undefined,
       repo_username: payload.repoUsername || undefined,
@@ -104,12 +113,41 @@ export async function createSession(payload: {
   });
 }
 
+export async function listSessions(): Promise<SessionResponse[]> {
+  return requestJson<SessionResponse[]>("/api/sessions/", { method: "GET" });
+}
+
 export async function listProviderConnections(): Promise<ProviderConnection[]> {
   return requestJson<ProviderConnection[]>("/api/vcs/connections", { method: "GET" });
 }
 
+export async function listGitHubRepositories(
+  providerConnectionId: string,
+  query = "",
+  limit = 8,
+): Promise<GitHubRepoSuggestion[]> {
+  const params = new URLSearchParams({
+    provider_connection_id: providerConnectionId,
+    limit: String(limit),
+  });
+  if (query.trim()) {
+    params.set("q", query.trim());
+  }
+  return requestJson<GitHubRepoSuggestion[]>(`/api/vcs/github/repos?${params.toString()}`, {
+    method: "GET",
+  });
+}
+
 export async function fetchSession(sessionId: string): Promise<SessionResponse> {
   return requestJson<SessionResponse>(`/api/sessions/${sessionId}`, { method: "GET" });
+}
+
+export async function retrySession(sessionId: string): Promise<SessionResponse> {
+  return requestJson<SessionResponse>(`/api/sessions/${sessionId}/retry`, { method: "POST" });
+}
+
+export async function fetchSessionAudit(sessionId: string): Promise<SessionAuditEvent[]> {
+  return requestJson<SessionAuditEvent[]>(`/api/sessions/${sessionId}/audit`, { method: "GET" });
 }
 
 export async function connectGitHub(payload: {
@@ -197,6 +235,10 @@ export async function confirmPasswordReset(payload: {
 
 export async function fetchAgents(sessionId: string): Promise<AgentSummary[]> {
   return requestJson<AgentSummary[]>(`/api/sessions/${sessionId}/agents`, { method: "GET" });
+}
+
+export async function fetchAgent(agentId: string): Promise<AgentDetail> {
+  return requestJson<AgentDetail>(`/api/agents/${agentId}`, { method: "GET" });
 }
 
 export async function createMergeRequest(taskId: string): Promise<MergeRequestResponse> {

@@ -14,7 +14,8 @@ class Settings(BaseSettings):
 
     # ── Security ──────────────────────────────────────────────────────────────
     SECRET_KEY: str = "change_me_in_production"
-    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: list[str] = []
+    CORS_ORIGIN_REGEX: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
     API_BEARER_TOKEN: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
@@ -42,10 +43,14 @@ class Settings(BaseSettings):
 
     # ── LLM ───────────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
-    MANAGER_MODEL: str = "gpt-4o"
+    GEMINI_API_KEY: str = ""
+    OPENAI_DEFAULT_MODEL: str = "gpt-4o"
+    GEMINI_DEFAULT_MODEL: str = "gemini-2.5-flash"
+    GEMINI_OPENAI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
     # ── Docker / Infrastructure ───────────────────────────────────────────────
     DOCKER_AGENT_IMAGE: str = "aeroswarm-agent:latest"
+    AGENT_PREVIEW_BASE_URL: str = ""
     REPO_BASE_PATH: str = "/repos"
     AGENT_PORT_RANGE_START: int = 10000
     AGENT_PORT_RANGE_END: int = 20000

@@ -8,6 +8,7 @@
 
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import type { AgentSummary } from "@/lib/types";
@@ -113,18 +114,23 @@ export function AgentCard({ agent }: AgentCardProps) {
 
       {/* Footer */}
       <div className="flex items-center justify-between px-4 py-2 border-t border-gray-800 text-xs">
-        {agent.previewUrl ? (
-          <a
-            href={agent.previewUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-400 hover:text-blue-300 underline"
-          >
-            Live Preview ↗
-          </a>
-        ) : (
-          <span className="text-gray-600">No preview yet</span>
-        )}
+        <div className="flex items-center gap-3">
+          <Link href={`/agents/${agent.id}`} className="text-blue-400 hover:text-blue-300 underline">
+            Open Worker
+          </Link>
+          {agent.previewUrl ? (
+            <a
+              href={agent.previewUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-300 hover:text-white underline"
+            >
+              Open Preview ↗
+            </a>
+          ) : (
+            <span className="text-gray-600">No web preview</span>
+          )}
+        </div>
 
         {agent.status === "idle" && (
           <div className="flex gap-2">

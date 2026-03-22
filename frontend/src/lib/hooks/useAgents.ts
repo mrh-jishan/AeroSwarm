@@ -9,14 +9,20 @@ import useSWR from "swr";
 import { fetchAgents } from "../api";
 import type { AgentSummary } from "../types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const ACTIVE_AGENT_STATUSES = new Set(["initializing", "running"]);
+const ACTIVE_SESSION_STATUSES = new Set(["queued", "planning", "running", "merging"]);
 
-export function useAgents(sessionId?: string) {
+export function useAgents(sessionId?: string, sessionStatus?: string) {
   const { data, error, isLoading } = useSWR<AgentSummary[]>(
     sessionId ? `session-agents:${sessionId}` : null,
     () => fetchAgents(sessionId!),
     {
-      refreshInterval: 3000,
+      refreshInterval: (agents) => {
+        if (!agents || agents.length === 0) {
+          return sessionStatus && !ACTIVE_SESSION_STATUSES.has(sessionStatus) ? 0 : 3000;
+        }
+        return agents.some((agent) => ACTIVE_AGENT_STATUSES.has(agent.status)) ? 3000 : 0;
+      },
     },
   );
 

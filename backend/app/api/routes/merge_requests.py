@@ -316,6 +316,7 @@ async def approve_merge(
 
     if agent and agent.worktree_path:
         git_mgr.remove_worktree(str(repo_path), agent.worktree_path)
+        repo_mgr.cleanup_session_repo_if_no_worktrees(session.id)
 
     mr.status = "merged"
     mr.approved_by = auth.actor

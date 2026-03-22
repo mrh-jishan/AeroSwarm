@@ -7,6 +7,7 @@ Nodes:
   check  → decide: continue working or mark done
 """
 
+import os
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage
@@ -29,8 +30,33 @@ class AgentState(TypedDict):
 TOOLS = [read_file_tool, write_file_tool, list_dir_tool, run_shell_tool]
 
 
+def _build_llm() -> ChatOpenAI:
+    provider = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
+    model = os.environ.get("LLM_MODEL", "gpt-4o").strip()
+
+    if provider == "gemini":
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY is not configured in the agent container")
+        return ChatOpenAI(
+            model=model,
+            temperature=0.1,
+            api_key=api_key,
+            base_url=os.environ.get(
+                "GEMINI_OPENAI_BASE_URL",
+                "https://generativelanguage.googleapis.com/v1beta/openai/",
+            ),
+            default_headers={"x-goog-api-client": "aeroswarm-oai/0.1.0"},
+        ).bind_tools(TOOLS)
+
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not configured in the agent container")
+    return ChatOpenAI(model=model, temperature=0.1, api_key=api_key).bind_tools(TOOLS)
+
+
 def build_graph() -> StateGraph:
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.1).bind_tools(TOOLS)
+    llm = _build_llm()
 
     def think(state: AgentState) -> dict:
         from langchain_core.messages import SystemMessage

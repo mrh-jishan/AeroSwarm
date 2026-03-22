@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import { DashboardApp } from "@/components/DashboardApp";
 
 export const metadata: Metadata = {
-  title: "Dashboard",
+  title: "New Session",
   robots: {
     index: false,
     follow: false,
   },
 };
 
-export default function DashboardPage() {
-  return <DashboardApp routeView="dashboard" />;
+export default function DashboardNewSessionPage() {
+  return <DashboardApp routeView="new" />;
 }

@@ -14,8 +14,8 @@ interface AgentGridProps {
 }
 
 export function AgentGrid({ sessionId }: AgentGridProps) {
-  const { agents, isLoading, error } = useAgents(sessionId);
   const { session } = useSession(sessionId);
+  const { agents, isLoading, error } = useAgents(sessionId, session?.status);
 
   if (!sessionId) {
     return (

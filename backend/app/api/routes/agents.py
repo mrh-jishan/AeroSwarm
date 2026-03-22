@@ -40,6 +40,16 @@ class SpawnAgentRequest(BaseModel):
     task_id: uuid.UUID
 
 
+class AgentResponse(BaseModel):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    task_id: uuid.UUID
+    task_title: str
+    scope_dir: str
+    status: str
+    port: int | None
+
+
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def spawn_agent(
     payload: SpawnAgentRequest,
@@ -64,6 +74,34 @@ async def spawn_agent(
         "port": agent.port,
         "worktree_path": agent.worktree_path,
     }
+
+
+@router.get("/{agent_id}", response_model=AgentResponse)
+async def get_agent(
+    agent_id: uuid.UUID,
+    auth: AuthContext = Depends(require_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Agent, Task, Session)
+        .join(Task, Task.id == Agent.task_id)
+        .join(Session, Session.id == Task.session_id)
+        .where(Agent.id == agent_id, Session.owner_user_id == auth.user_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    agent, task, session = row
+    return AgentResponse(
+        id=agent.id,
+        session_id=session.id,
+        task_id=task.id,
+        task_title=task.title,
+        scope_dir=task.scope_dir,
+        status=agent.status,
+        port=agent.port,
+    )
 
 
 # ── WebSocket log streaming ───────────────────────────────────────────────────

@@ -119,4 +119,5 @@ volumes:
 
 networks:
   aeroswarm-net:
+    name: aeroswarm-net
     driver: bridge

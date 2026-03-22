@@ -27,6 +27,17 @@ class Session(Base):
     repo_owner: Mapped[str | None] = mapped_column(String(255))
     repo_name: Mapped[str | None] = mapped_column(String(255))
     base_branch: Mapped[str | None] = mapped_column(String(255))
+    llm_provider: Mapped[str] = mapped_column(String(20), nullable=False, default="gemini")
+    manager_model: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        default="gemini-2.5-flash",
+    )
+    agent_model: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        default="gemini-2.5-flash",
+    )
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     # planning | running | merging | done | failed
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="planning")

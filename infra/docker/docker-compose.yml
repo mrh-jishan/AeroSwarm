@@ -64,13 +64,14 @@ services:
       DATABASE_URL: postgresql+asyncpg://aeroswarm:aeroswarm_dev_secret@postgres:5432/aeroswarm
       REDIS_URL: redis://redis:6379
       DOCKER_HOST: unix:///var/run/docker.sock
-      REPO_BASE_PATH: /repos
+      REPO_BASE_PATH: ${HOST_REPO_BASE_PATH:-/Users/robin-hassan/Desktop/AeroSwarm/.local/repos}
+      RUN_MIGRATIONS_ON_STARTUP: "true"
       SECRET_KEY: change_me_in_production
     ports:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - repos_volume:/repos
+      - ../../.local/repos:${HOST_REPO_BASE_PATH:-/Users/robin-hassan/Desktop/AeroSwarm/.local/repos}
       - ../../backend:/app  # hot-reload in dev
     depends_on:
       postgres:
@@ -99,11 +100,11 @@ services:
       DATABASE_URL: postgresql+asyncpg://aeroswarm:aeroswarm_dev_secret@postgres:5432/aeroswarm
       REDIS_URL: redis://redis:6379
       DOCKER_HOST: unix:///var/run/docker.sock
-      REPO_BASE_PATH: /repos
+      REPO_BASE_PATH: ${HOST_REPO_BASE_PATH:-/Users/robin-hassan/Desktop/AeroSwarm/.local/repos}
       SECRET_KEY: change_me_in_production
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - repos_volume:/repos
+      - ../../.local/repos:${HOST_REPO_BASE_PATH:-/Users/robin-hassan/Desktop/AeroSwarm/.local/repos}
       - ../../backend:/app
     depends_on:
       postgres:
@@ -115,8 +116,8 @@ services:
 
 volumes:
   postgres_data:
-  repos_volume:
 
 networks:
   aeroswarm-net:
+    name: aeroswarm-net
     driver: bridge

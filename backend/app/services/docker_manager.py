@@ -10,8 +10,10 @@ Each agent container:
 """
 
 import logging
+import os
 import uuid
 from collections.abc import Sequence
+from pathlib import Path
 
 import docker
 from docker.errors import DockerException
@@ -21,13 +23,48 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _docker_desktop_socket_path() -> Path:
+    return Path.home() / ".docker" / "run" / "docker.sock"
+
+
+def _docker_host_candidates() -> list[str]:
+    configured_host = os.getenv("DOCKER_HOST")
+    if configured_host:
+        return [configured_host]
+
+    candidates: list[str] = []
+    desktop_socket = _docker_desktop_socket_path()
+    if desktop_socket.exists():
+        candidates.append(f"unix://{desktop_socket}")
+    candidates.append("unix:///var/run/docker.sock")
+    return candidates
+
+
 class DockerManagerService:
     def __init__(self) -> None:
-        try:
-            self._client = docker.from_env()
-        except DockerException as exc:
-            logger.warning("Docker not available: %s", exc)
-            self._client = None  # type: ignore[assignment]
+        self._client = None
+        self._docker_host = None
+        self._availability_error = "Docker daemon is not accessible"
+
+        connection_errors: list[str] = []
+        for host in _docker_host_candidates():
+            try:
+                client = docker.DockerClient(base_url=host)
+                client.ping()
+                self._client = client
+                self._docker_host = host
+                return
+            except DockerException as exc:
+                connection_errors.append(f"{host}: {exc}")
+
+        if connection_errors:
+            self._availability_error = "; ".join(connection_errors)
+        logger.warning("Docker not available: %s", self._availability_error)
+
+    def availability(self) -> tuple[bool, str]:
+        if self._client is None:
+            return False, self._availability_error
+        return True, self._docker_host or "ok"
 
     async def spawn_agent(
         self,
@@ -35,6 +72,8 @@ class DockerManagerService:
         worktree_path: str,
         scope_dir: str,
         task_description: str,
+        llm_provider: str,
+        agent_model: str,
         port: int,
         agent_id: uuid.UUID,
     ) -> str:
@@ -61,7 +100,11 @@ class DockerManagerService:
                 "TASK_ID": str(task_id),
                 "TASK_DESCRIPTION": task_description,
                 "SCOPE_DIR": f"/workspace/{scope_dir}",
+                "LLM_PROVIDER": llm_provider,
+                "LLM_MODEL": agent_model,
                 "OPENAI_API_KEY": settings.OPENAI_API_KEY,
+                "GEMINI_API_KEY": settings.GEMINI_API_KEY,
+                "GEMINI_OPENAI_BASE_URL": settings.GEMINI_OPENAI_BASE_URL,
                 "API_BEARER_TOKEN": settings.API_BEARER_TOKEN,
                 "REDIS_URL": settings.REDIS_URL,
                 "BACKEND_API_URL": "http://aeroswarm-backend:8000",

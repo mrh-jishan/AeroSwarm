@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.base import Agent, Task
+from app.models.base import Agent, Session, Task
 from app.services.docker_manager import DockerManagerService
 from app.services.git_manager import GitManagerService
 from app.services.repo_manager import RepoManagerService
@@ -23,7 +23,12 @@ class AgentLauncherService:
         self._git_mgr = GitManagerService()
         self._repo_mgr = RepoManagerService()
 
-    async def launch_for_task(self, db: AsyncSession, task: Task) -> Agent:
+    async def launch_for_task(
+        self,
+        db: AsyncSession,
+        task: Task,
+        session: Session,
+    ) -> Agent:
         agent_id = uuid.uuid4()
         repo_path = self._repo_mgr.get_repo_path(task.session_id)
 
@@ -42,6 +47,8 @@ class AgentLauncherService:
             worktree_path=worktree_path,
             scope_dir=task.scope_dir,
             task_description=task.description or task.title,
+            llm_provider=session.llm_provider,
+            agent_model=session.agent_model,
             port=port,
             agent_id=agent_id,
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 from urllib.parse import parse_qs, urlparse
@@ -63,3 +64,43 @@ def test_verify_webhook_signature() -> None:
         assert service.verify_webhook_signature(payload, "sha256=bad") is False
     finally:
         settings.GITHUB_WEBHOOK_SECRET = original_secret
+
+
+def test_list_repositories_filters_and_normalizes_query(monkeypatch) -> None:
+    service = GitHubProviderService()
+
+    async def fake_request(method: str, path: str, access_token: str, **_: object):
+        assert method == "GET"
+        assert path == "/user/repos"
+        assert access_token == "token"
+        return [
+            {
+                "owner": {"login": "mrh-jishan"},
+                "name": "syslog",
+                "full_name": "mrh-jishan/syslog",
+                "default_branch": "main",
+                "html_url": "https://github.com/mrh-jishan/syslog",
+                "private": False,
+            },
+            {
+                "owner": {"login": "mrh-jishan"},
+                "name": "another-repo",
+                "full_name": "mrh-jishan/another-repo",
+                "default_branch": "main",
+                "html_url": "https://github.com/mrh-jishan/another-repo",
+                "private": True,
+            },
+        ]
+
+    monkeypatch.setattr(service, "_request", fake_request)
+
+    repos = asyncio.run(
+        service.list_repositories(
+            access_token="token",
+            auth_mode="oauth",
+            query="https://github.com/mrh-jishan/syslog",
+        )
+    )
+
+    assert len(repos) == 1
+    assert repos[0].full_name == "mrh-jishan/syslog"

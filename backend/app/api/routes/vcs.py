@@ -22,11 +22,13 @@ from app.services.crypto import CredentialCryptoService
 from app.services.docker_manager import DockerManagerService
 from app.services.git_manager import GitManagerService
 from app.services.github_provider import GitHubProviderService
+from app.services.provider_connections import ProviderConnectionService
 from app.services.repo_manager import RepoManagerService
 
 router = APIRouter()
 crypto = CredentialCryptoService()
 github = GitHubProviderService()
+provider_connections = ProviderConnectionService()
 audit = AuditService()
 docker_mgr = DockerManagerService()
 git_mgr = GitManagerService()
@@ -43,6 +45,15 @@ class ProviderConnectionResponse(BaseModel):
     auth_mode: str
     account_login: str
     installation_id: int | None = None
+
+
+class GitHubRepoSuggestionResponse(BaseModel):
+    owner: str
+    name: str
+    full_name: str
+    default_branch: str
+    html_url: str
+    private: bool
 
 
 def _build_frontend_redirect(path: str, params: dict[str, str] | None = None) -> str:
@@ -239,6 +250,48 @@ async def list_connections(
     ]
 
 
+@router.get("/github/repos", response_model=list[GitHubRepoSuggestionResponse])
+async def list_github_repositories(
+    provider_connection_id: uuid.UUID,
+    q: str = "",
+    limit: int = 8,
+    auth: AuthContext = Depends(require_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    connection = await provider_connections.get_connection_for_user(
+        db=db,
+        connection_id=provider_connection_id,
+        user_id=auth.user_id,
+    )
+    if connection is None:
+        raise HTTPException(status_code=404, detail="Provider connection not found")
+    if connection.provider != "github":
+        raise HTTPException(status_code=400, detail="Repository suggestions only support GitHub")
+
+    access_token = await provider_connections.resolve_access_token(connection)
+    try:
+        repositories = await github.list_repositories(
+            access_token=access_token,
+            auth_mode=connection.auth_mode,
+            query=q,
+            limit=max(1, min(limit, 20)),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return [
+        GitHubRepoSuggestionResponse(
+            owner=repo.owner,
+            name=repo.name,
+            full_name=repo.full_name,
+            default_branch=repo.default_branch,
+            html_url=repo.html_url,
+            private=repo.private,
+        )
+        for repo in repositories
+    ]
+
+
 @router.get("/github-app/install/start")
 async def start_github_app_install(
     redirect_path: str = "/",
@@ -401,6 +454,7 @@ async def github_webhook(
             if agent and agent.worktree_path:
                 repo_path = repo_mgr.get_repo_path(session.id)
                 git_mgr.remove_worktree(str(repo_path), agent.worktree_path)
+                repo_mgr.cleanup_session_repo_if_no_worktrees(session.id)
         else:
             mr.status = "rejected"
             task.status = "running"

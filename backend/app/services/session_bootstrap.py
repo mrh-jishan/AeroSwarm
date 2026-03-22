@@ -94,7 +94,11 @@ class SessionBootstrapService:
             )
             await db.commit()
 
-            sub_tasks = await self._orchestrator.decompose(session.prompt)
+            sub_tasks = await self._orchestrator.decompose(
+                session.prompt,
+                provider=session.llm_provider,
+                model=session.manager_model,
+            )
             tasks: list[Task] = []
             for sub_task in sub_tasks:
                 task = Task(
@@ -109,7 +113,7 @@ class SessionBootstrapService:
             await db.flush()
 
             for task in tasks:
-                agent = await self._launcher.launch_for_task(db, task)
+                agent = await self._launcher.launch_for_task(db, task, session)
                 launched_agents.append(agent)
                 await self._audit.record(
                     db,
@@ -136,8 +140,8 @@ class SessionBootstrapService:
             }
         except Exception as exc:
             await db.rollback()
-            self._cleanup_launched_agents(session.id, launched_agents)
-            self._repo_mgr.cleanup_session_repo(session.id)
+            self._cleanup_launched_agents(session_id, launched_agents)
+            self._repo_mgr.cleanup_session_repo(session_id)
 
             failed_session = await db.get(Session, session_id)
             if failed_session is not None:
@@ -147,7 +151,7 @@ class SessionBootstrapService:
                     db,
                     "session.bootstrap.failed",
                     actor,
-                    session_id=failed_session.id,
+                    session_id=session_id,
                     details={"error": str(exc)},
                 )
                 await db.commit()

@@ -1,6 +1,6 @@
 /**
  * AgentTerminal — xterm.js terminal panel connected to backend WebSocket.
- * Streams real-time agent stdout from Redis via FastAPI /ws/agents/:id/logs
+ * Streams real-time agent stdout from Redis via FastAPI /api/agents/:id/logs
  */
 
 "use client";
@@ -39,7 +39,7 @@ export default function AgentTerminal({ agentId }: AgentTerminalProps) {
     termRef.current = term;
 
     const token = getApiToken();
-    const url = new URL(`${WS_BASE}/ws/agents/${agentId}/logs`);
+    const url = new URL(`${WS_BASE}/api/agents/${agentId}/logs`);
     if (token) {
       url.searchParams.set("token", token);
     }

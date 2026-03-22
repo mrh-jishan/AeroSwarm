@@ -28,6 +28,16 @@ class GitHubRepo:
 
 
 @dataclass(slots=True)
+class GitHubRepoSuggestion:
+    owner: str
+    name: str
+    full_name: str
+    default_branch: str
+    html_url: str
+    private: bool
+
+
+@dataclass(slots=True)
 class GitHubPullRequest:
     number: int
     html_url: str
@@ -149,6 +159,76 @@ class GitHubProviderService:
             default_branch=str(data["default_branch"]),
             html_url=str(data["html_url"]),
         )
+
+    async def list_repositories(
+        self,
+        *,
+        access_token: str,
+        auth_mode: str,
+        query: str | None = None,
+        limit: int = 20,
+    ) -> list[GitHubRepoSuggestion]:
+        if auth_mode == "github_app":
+            data = await self._request(
+                "GET",
+                "/installation/repositories",
+                access_token,
+                params={"per_page": "100"},
+            )
+            repositories = (data if isinstance(data, dict) else {}).get("repositories", [])
+        else:
+            data = await self._request(
+                "GET",
+                "/user/repos",
+                access_token,
+                params={
+                    "per_page": "100",
+                    "sort": "updated",
+                    "affiliation": "owner,collaborator,organization_member",
+                },
+            )
+            repositories = data if isinstance(data, list) else []
+
+        normalized_query = self._normalize_repo_query(query)
+        suggestions: list[GitHubRepoSuggestion] = []
+        for repo in repositories:
+            owner = str((repo.get("owner") or {}).get("login", ""))
+            name = str(repo.get("name", ""))
+            full_name = str(repo.get("full_name") or f"{owner}/{name}")
+            html_url = str(repo.get("html_url", ""))
+            default_branch = str(repo.get("default_branch", ""))
+            if normalized_query:
+                haystack = " ".join(
+                    part.lower()
+                    for part in [owner, name, full_name, html_url]
+                    if part
+                )
+                if normalized_query not in haystack:
+                    continue
+            suggestions.append(
+                GitHubRepoSuggestion(
+                    owner=owner,
+                    name=name,
+                    full_name=full_name,
+                    default_branch=default_branch,
+                    html_url=html_url,
+                    private=bool(repo.get("private", False)),
+                )
+            )
+            if len(suggestions) >= limit:
+                break
+
+        return suggestions
+
+    def _normalize_repo_query(self, query: str | None) -> str:
+        normalized = (query or "").strip().lower()
+        if normalized.startswith("https://github.com/"):
+            normalized = normalized.removeprefix("https://github.com/")
+        elif normalized.startswith("http://github.com/"):
+            normalized = normalized.removeprefix("http://github.com/")
+        elif normalized.startswith("git@github.com:"):
+            normalized = normalized.removeprefix("git@github.com:")
+        return normalized.strip("/")
 
     async def find_open_pull_request(
         self,

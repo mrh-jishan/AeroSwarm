@@ -27,6 +27,8 @@ async def main() -> None:
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     backend_api_url = os.environ.get("BACKEND_API_URL", "http://localhost:8000")
     api_bearer_token = os.environ.get("API_BEARER_TOKEN", "")
+    llm_provider = os.environ.get("LLM_PROVIDER", "openai")
+    llm_model = os.environ.get("LLM_MODEL", "gpt-4o")
 
     # Redis connection for log streaming
     r = await aioredis.from_url(redis_url, decode_responses=True)
@@ -51,26 +53,32 @@ async def main() -> None:
     await publish(f"[AeroSwarm Agent {agent_id}] Starting...")
     await publish(f"[Task] {task_description}")
     await publish(f"[Scope] {scope_dir}")
+    await publish(f"[LLM] {llm_provider}:{llm_model}")
     await update_status("running")
+    try:
+        graph = build_graph()
 
-    graph = build_graph()
+        initial_state = {
+            "agent_id": agent_id,
+            "task_description": task_description,
+            "scope_dir": scope_dir,
+            "messages": [],
+            "completed": False,
+        }
 
-    initial_state = {
-        "agent_id": agent_id,
-        "task_description": task_description,
-        "scope_dir": scope_dir,
-        "messages": [],
-        "completed": False,
-    }
+        async for event in graph.astream(initial_state):
+            for node_name, node_output in event.items():
+                log_line = f"[{node_name}] {node_output.get('last_output', '')}"
+                await publish(log_line)
 
-    async for event in graph.astream(initial_state):
-        for node_name, node_output in event.items():
-            log_line = f"[{node_name}] {node_output.get('last_output', '')}"
-            await publish(log_line)
-
-    await publish(f"[AeroSwarm Agent {agent_id}] Task complete.")
-    await update_status("idle")
-    await r.aclose()
+        await publish(f"[AeroSwarm Agent {agent_id}] Task complete.")
+        await update_status("idle")
+    except Exception as exc:
+        await publish(f"[error] {type(exc).__name__}: {exc}")
+        await update_status("error")
+        raise
+    finally:
+        await r.aclose()
 
 
 if __name__ == "__main__":

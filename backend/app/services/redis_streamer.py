@@ -2,7 +2,7 @@
 Redis Streaming Service — publishes agent container logs to frontend via WebSockets.
 
 Each agent writes to channel:  logs:<agent_id>
-Frontend subscribes via:       WS /ws/agents/<agent_id>/logs
+Frontend subscribes via:       WS /api/agents/<agent_id>/logs
 """
 
 import logging
