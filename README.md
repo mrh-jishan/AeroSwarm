@@ -16,6 +16,34 @@ Agent Containers (LangGraph Workers × N)
 Live Preview URLs (agent-<id>.aeroswarm.dev)
 ```
 
+## Product Screens
+
+These screenshots are included in `docs/` and render directly from the root README on GitHub.
+
+### Home
+
+![AeroSwarm Home](docs/home.png)
+
+### Dashboard
+
+![AeroSwarm Dashboard](docs/dashboard.png)
+
+### New Session
+
+![AeroSwarm Session Launch](docs/session.png)
+
+### Session History
+
+![AeroSwarm Session History](docs/session%20history.png)
+
+### Session Details
+
+![AeroSwarm Session Details](docs/session%20by%20id.png)
+
+### Worker Code Workspace
+
+![AeroSwarm Code IDE](docs/code%20ide.png)
+
 ## Quick Start (Local Dev)
 
 ### Prerequisites
