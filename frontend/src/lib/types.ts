@@ -20,6 +20,26 @@ export interface AgentDetail {
   port: number | null;
 }
 
+export interface AgentLogsPage {
+  lines: string[];
+  nextBefore: number | null;
+}
+
+export interface AgentFileEntry {
+  name: string;
+  is_dir: boolean;
+}
+
+export interface AgentDirectoryListing {
+  path: string;
+  entries: AgentFileEntry[];
+}
+
+export interface AgentFileDocument {
+  path: string;
+  content: string;
+}
+
 export interface SessionResponse {
   id: string;
   provider_connection_id?: string | null;

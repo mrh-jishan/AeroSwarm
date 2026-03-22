@@ -23,6 +23,10 @@ class AgentLauncherService:
         self._git_mgr = GitManagerService()
         self._repo_mgr = RepoManagerService()
 
+    @property
+    def docker_manager(self) -> DockerManagerService:
+        return self._docker_mgr
+
     async def launch_for_task(
         self,
         db: AsyncSession,

@@ -10,6 +10,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     WebSocket,
     WebSocketDisconnect,
     WebSocketException,
@@ -48,6 +49,11 @@ class AgentResponse(BaseModel):
     scope_dir: str
     status: str
     port: int | None
+
+
+class AgentLogsResponse(BaseModel):
+    lines: list[str]
+    next_before: int | None
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -101,6 +107,38 @@ async def get_agent(
         scope_dir=task.scope_dir,
         status=agent.status,
         port=agent.port,
+    )
+
+
+@router.get("/{agent_id}/logs", response_model=AgentLogsResponse)
+async def get_agent_logs(
+    agent_id: uuid.UUID,
+    before: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=500),
+    auth: AuthContext = Depends(require_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Agent)
+        .join(Task, Task.id == Agent.task_id)
+        .join(Session, Session.id == Task.session_id)
+        .where(Agent.id == agent_id, Session.owner_user_id == auth.user_id)
+    )
+    agent = result.scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    if not agent.container_id:
+        return AgentLogsResponse(lines=[], next_before=None)
+
+    logs = launcher.docker_manager.get_logs(agent.container_id, tail=10_000)
+    all_lines = logs.splitlines()
+    end = max(len(all_lines) - before, 0)
+    start = max(end - limit, 0)
+    next_before = len(all_lines) - start if start > 0 else None
+    return AgentLogsResponse(
+        lines=all_lines[start:end],
+        next_before=next_before,
     )
 
 

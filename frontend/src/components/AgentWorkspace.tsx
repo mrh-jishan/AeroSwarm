@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { fetchAgent } from "@/lib/api";
 import type { AgentDetail } from "@/lib/types";
 import dynamic from "next/dynamic";
+import { AgentCodeWorkspace } from "./AgentCodeWorkspace";
 
 const AgentTerminal = dynamic(() => import("./AgentTerminal"), { ssr: false });
 
@@ -93,6 +94,8 @@ export function AgentWorkspace({ agentId }: AgentWorkspaceProps) {
         </div>
       </section>
 
+      <AgentCodeWorkspace agentId={data.id} initialPath={data.scope_dir} />
+
       <section className="rounded-2xl border border-gray-800 bg-gray-900/80 p-5">
         <div className="mb-4">
           <h3 className="text-lg font-semibold text-white">Live Terminal</h3>
@@ -100,7 +103,7 @@ export function AgentWorkspace({ agentId }: AgentWorkspaceProps) {
             This worker streams logs over the authenticated websocket channel. There is no separate HTTP preview unless a task explicitly starts one.
           </p>
         </div>
-        <div className="min-h-[420px] overflow-hidden rounded-xl border border-gray-800 bg-black">
+        <div className="h-[22rem] min-h-[22rem] overflow-hidden rounded-xl border border-gray-800 bg-black">
           <AgentTerminal agentId={data.id} />
         </div>
       </section>

@@ -2,6 +2,9 @@
 
 import type {
   AgentDetail,
+  AgentDirectoryListing,
+  AgentFileDocument,
+  AgentLogsPage,
   AgentSummary,
   AuthResponse,
   GitHubRepoSuggestion,
@@ -140,6 +143,62 @@ export async function listGitHubRepositories(
 
 export async function fetchSession(sessionId: string): Promise<SessionResponse> {
   return requestJson<SessionResponse>(`/api/sessions/${sessionId}`, { method: "GET" });
+}
+
+export async function listAgentFiles(agentId: string, path = ""): Promise<AgentDirectoryListing> {
+  const params = new URLSearchParams();
+  if (path) {
+    params.set("path", path);
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return requestJson<AgentDirectoryListing>(`/api/agents/${agentId}/files${suffix}`, {
+    method: "GET",
+  });
+}
+
+export async function fetchAgentFile(agentId: string, path: string): Promise<AgentFileDocument> {
+  const params = new URLSearchParams({ path });
+  return requestJson<AgentFileDocument>(`/api/agents/${agentId}/files?${params.toString()}`, {
+    method: "GET",
+  });
+}
+
+export async function updateAgentFile(
+  agentId: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  const params = new URLSearchParams({ path });
+  await requestJson(`/api/agents/${agentId}/files?${params.toString()}`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function fetchAgentLogs(agentId: string): Promise<string[]> {
+  return fetchAgentLogsPage(agentId).then((response) => response.lines);
+}
+
+export async function fetchAgentLogsPage(
+  agentId: string,
+  options: { before?: number; limit?: number } = {},
+): Promise<AgentLogsPage> {
+  const params = new URLSearchParams();
+  if (options.before !== undefined) {
+    params.set("before", String(options.before));
+  }
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  const response = await requestJson<{ lines: string[]; next_before: number | null }>(
+    `/api/agents/${agentId}/logs${suffix}`,
+    { method: "GET" },
+  );
+  return {
+    lines: response.lines,
+    nextBefore: response.next_before,
+  };
 }
 
 export async function retrySession(sessionId: string): Promise<SessionResponse> {

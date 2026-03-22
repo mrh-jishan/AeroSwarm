@@ -108,7 +108,7 @@ export function AgentCard({ agent }: AgentCardProps) {
       </div>
 
       {/* Terminal */}
-      <div className="flex-1 min-h-[200px] bg-black">
+      <div className="h-[320px] min-h-[320px] bg-black">
         <AgentTerminal agentId={agent.id} />
       </div>
 
