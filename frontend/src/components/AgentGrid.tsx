@@ -58,6 +58,14 @@ export function AgentGrid({ sessionId }: AgentGridProps) {
       );
     }
 
+    if (session?.status === "stopped") {
+      return (
+        <div className="border border-amber-900 bg-amber-950/40 text-amber-200 rounded-xl p-6 text-sm">
+          Session stopped: {session.error_message || "Stopped by user"}
+        </div>
+      );
+    }
+
     return (
       <div className="border border-dashed border-gray-700 rounded-xl p-12 text-center text-gray-500">
         No active agents. Start a session above to spawn agents.

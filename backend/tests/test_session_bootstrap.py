@@ -85,3 +85,49 @@ def test_run_marks_session_failed_without_touching_expired_session_ids() -> None
         )
 
     asyncio.run(exercise())
+
+
+def test_run_honors_stop_request_before_launching_agents() -> None:
+    session_id = uuid.uuid4()
+    session = _ExpiringSession(session_id)
+
+    async def exercise() -> None:
+        service = SessionBootstrapService()
+        service._cleanup_existing_tasks = AsyncMock()
+        service._resolve_repo_credentials = AsyncMock(return_value=(None, None))
+        service._stop_requested = AsyncMock(side_effect=[True])
+        service._cleanup_launched_agents = Mock()
+        service._repo_mgr.cleanup_session_repo = Mock()
+        service._repo_mgr.get_default_branch = Mock(return_value="main")
+        service._repo_mgr.clone_repo = Mock()
+        service._orchestrator.decompose = AsyncMock(
+            return_value=[
+                Mock(
+                    title="Create FAQ page",
+                    description="Build the q/a page",
+                    scope_dir="src/pages/faq",
+                )
+            ]
+        )
+        service._launcher.launch_for_task = AsyncMock()
+        service._audit.record = AsyncMock()
+
+        db = AsyncMock()
+        db.add = Mock()
+        db.get = AsyncMock(return_value=session)
+
+        result = await service.run(
+            db,
+            session_id=session_id,
+            actor="r.hassan@gmail.com",
+            payload={"requested_by": "r.hassan@gmail.com"},
+        )
+
+        assert result["status"] == "stopped"
+        assert session.status == "stopped"
+        assert session.error_message == "Stopped by user"
+        service._launcher.launch_for_task.assert_not_awaited()
+        service._cleanup_launched_agents.assert_called_once_with(session_id, [])
+        service._repo_mgr.cleanup_session_repo.assert_called_once_with(session_id)
+
+    asyncio.run(exercise())

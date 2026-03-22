@@ -7,13 +7,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { AgentGrid } from "@/components/AgentGrid";
 import { AgentWorkspace } from "@/components/AgentWorkspace";
 import { AuthPanel } from "@/components/AuthPanel";
 import { NewSessionForm } from "@/components/NewSessionForm";
 import { SessionSettingsPanel } from "@/components/SessionSettingsPanel";
-import { fetchMe, fetchSessionAudit, listSessions, logout, retrySession } from "@/lib/api";
+import { fetchMe, fetchSessionAudit, listSessions, logout, retrySession, stopSession } from "@/lib/api";
 import { useSession } from "@/lib/hooks/useSession";
 import type { SessionAuditEvent, SessionResponse, User } from "@/lib/types";
 
@@ -145,14 +145,20 @@ function SidebarSessionItem({
 function HistorySessionCard({
   session,
   retrying,
+  stopping,
   onOpen,
   onRetry,
+  onStop,
 }: {
   session: SessionResponse;
   retrying: boolean;
+  stopping: boolean;
   onOpen: () => void;
   onRetry: () => void;
+  onStop: () => void;
 }) {
+  const canStop = ACTIVE_SESSION_STATUSES.has(session.status);
+
   return (
     <div className="rounded-2xl border border-gray-800 bg-gray-900/80 p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -184,6 +190,16 @@ function HistorySessionCard({
       )}
 
       <div className="mt-5 flex gap-3">
+        {canStop && (
+          <button
+            type="button"
+            onClick={onStop}
+            disabled={stopping}
+            className="rounded-lg border border-red-700 px-4 py-2 text-sm text-red-200 hover:border-red-500 disabled:border-red-900 disabled:text-red-500"
+          >
+            {stopping ? "Stopping..." : "Stop Session"}
+          </button>
+        )}
         <button
           type="button"
           onClick={onOpen}
@@ -191,14 +207,16 @@ function HistorySessionCard({
         >
           Open Details
         </button>
-        <button
-          type="button"
-          onClick={onRetry}
-          disabled={retrying}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:bg-blue-900"
-        >
-          {retrying ? "Retrying..." : "Retry Session"}
-        </button>
+        {!canStop && (
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={retrying}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:bg-blue-900"
+          >
+            {retrying ? "Retrying..." : "Retry Session"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -210,10 +228,12 @@ export function DashboardApp({
   agentId,
 }: DashboardAppProps) {
   const router = useRouter();
+  const { mutate } = useSWRConfig();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authResolved, setAuthResolved] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(sessionId);
   const [retryingSessionId, setRetryingSessionId] = useState<string | null>(null);
+  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -368,6 +388,22 @@ export function DashboardApp({
       setPageError(error instanceof Error ? error.message : "Failed to retry session");
     } finally {
       setRetryingSessionId(null);
+    }
+  }
+
+  async function handleStopSession(targetSessionId: string) {
+    setStoppingSessionId(targetSessionId);
+    setPageError(null);
+
+    try {
+      const stoppedSession = await stopSession(targetSessionId);
+      await mutate(`session:${targetSessionId}`, stoppedSession, { revalidate: false });
+      await mutate(`session-audit:${targetSessionId}`);
+      await mutateSessions();
+    } catch (error: unknown) {
+      setPageError(error instanceof Error ? error.message : "Failed to stop session");
+    } finally {
+      setStoppingSessionId(null);
     }
   }
 
@@ -541,8 +577,10 @@ export function DashboardApp({
                   <HistorySessionCard
                     session={displayedSession}
                     retrying={retryingSessionId === displayedSession.id}
+                    stopping={stoppingSessionId === displayedSession.id}
                     onOpen={() => openSession(displayedSession.id)}
                     onRetry={() => void handleRetrySession(displayedSession.id)}
+                    onStop={() => void handleStopSession(displayedSession.id)}
                   />
                 )}
               </section>
@@ -595,8 +633,10 @@ export function DashboardApp({
                       key={session.id}
                       session={session}
                       retrying={retryingSessionId === session.id}
+                      stopping={stoppingSessionId === session.id}
                       onOpen={() => openSession(session.id)}
                       onRetry={() => void handleRetrySession(session.id)}
+                      onStop={() => void handleStopSession(session.id)}
                     />
                   ))}
                 </div>
@@ -614,7 +654,17 @@ export function DashboardApp({
                       Opened from real history routes while keeping the history rail on the left.
                     </p>
                   </div>
-                  {selectedSessionId && (
+                  {selectedSessionId && displayedSession && ACTIVE_SESSION_STATUSES.has(displayedSession.status) && (
+                    <button
+                      type="button"
+                      onClick={() => void handleStopSession(selectedSessionId)}
+                      disabled={stoppingSessionId === selectedSessionId}
+                      className="rounded-lg border border-red-700 px-4 py-2 text-sm font-medium text-red-200 hover:border-red-500 disabled:border-red-900 disabled:text-red-500"
+                    >
+                      {stoppingSessionId === selectedSessionId ? "Stopping..." : "Stop This Session"}
+                    </button>
+                  )}
+                  {selectedSessionId && displayedSession && !ACTIVE_SESSION_STATUSES.has(displayedSession.status) && (
                     <button
                       type="button"
                       onClick={() => void handleRetrySession(selectedSessionId)}

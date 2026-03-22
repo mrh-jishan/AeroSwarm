@@ -146,6 +146,10 @@ export async function retrySession(sessionId: string): Promise<SessionResponse> 
   return requestJson<SessionResponse>(`/api/sessions/${sessionId}/retry`, { method: "POST" });
 }
 
+export async function stopSession(sessionId: string): Promise<SessionResponse> {
+  return requestJson<SessionResponse>(`/api/sessions/${sessionId}/stop`, { method: "POST" });
+}
+
 export async function fetchSessionAudit(sessionId: string): Promise<SessionAuditEvent[]> {
   return requestJson<SessionAuditEvent[]>(`/api/sessions/${sessionId}/audit`, { method: "GET" });
 }

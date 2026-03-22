@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +41,9 @@ class SessionBootstrapService:
         if session is None:
             raise ValueError("Session not found")
 
+        if session.status == "stopped":
+            return {"session_id": str(session.id), "status": session.status}
+
         if session.status == "running":
             return {"session_id": str(session.id), "status": session.status}
 
@@ -48,6 +52,7 @@ class SessionBootstrapService:
         await db.commit()
 
         launched_agents: list[Agent] = []
+        tasks: list[Task] = []
         try:
             await self._cleanup_existing_tasks(db, session)
 
@@ -99,7 +104,6 @@ class SessionBootstrapService:
                 provider=session.llm_provider,
                 model=session.manager_model,
             )
-            tasks: list[Task] = []
             for sub_task in sub_tasks:
                 task = Task(
                     session_id=session.id,
@@ -112,7 +116,22 @@ class SessionBootstrapService:
                 tasks.append(task)
             await db.flush()
 
+            if await self._stop_requested(db, session.id):
+                return await self._finalize_stopped_session(
+                    db,
+                    session=session,
+                    tasks=tasks,
+                    launched_agents=launched_agents,
+                )
+
             for task in tasks:
+                if await self._stop_requested(db, session.id):
+                    return await self._finalize_stopped_session(
+                        db,
+                        session=session,
+                        tasks=tasks,
+                        launched_agents=launched_agents,
+                    )
                 agent = await self._launcher.launch_for_task(db, task, session)
                 launched_agents.append(agent)
                 await self._audit.record(
@@ -127,6 +146,14 @@ class SessionBootstrapService:
                         "scope_dir": task.scope_dir,
                         "port": agent.port,
                     },
+                )
+
+            if await self._stop_requested(db, session.id):
+                return await self._finalize_stopped_session(
+                    db,
+                    session=session,
+                    tasks=tasks,
+                    launched_agents=launched_agents,
                 )
 
             session.status = "running"
@@ -194,6 +221,42 @@ class SessionBootstrapService:
         await db.execute(delete(Agent).where(Agent.task_id.in_(task_ids)))
         await db.execute(delete(Task).where(Task.id.in_(task_ids)))
         await db.commit()
+
+    async def _stop_requested(self, db: AsyncSession, session_id: uuid.UUID) -> bool:
+        result = await db.execute(select(Session.status).where(Session.id == session_id))
+        return result.scalar_one_or_none() == "stopped"
+
+    async def _finalize_stopped_session(
+        self,
+        db: AsyncSession,
+        *,
+        session: Session,
+        tasks: list[Task],
+        launched_agents: list[Agent],
+    ) -> dict[str, object]:
+        stopped_at = datetime.now(timezone.utc)
+
+        self._cleanup_launched_agents(session.id, launched_agents)
+        self._repo_mgr.cleanup_session_repo(session.id)
+
+        for task in tasks:
+            if task.status not in {"done", "failed", "stopped"}:
+                task.status = "stopped"
+
+        for agent in launched_agents:
+            agent.status = "stopped"
+            agent.stopped_at = stopped_at
+
+        session.status = "stopped"
+        session.error_message = "Stopped by user"
+        await db.commit()
+
+        return {
+            "session_id": str(session.id),
+            "status": session.status,
+            "task_count": len(tasks),
+            "agent_count": len(launched_agents),
+        }
 
     def _cleanup_launched_agents(self, session_id: uuid.UUID, agents: Iterable[Agent]) -> None:
         repo_path = self._repo_mgr.get_repo_path(session_id)

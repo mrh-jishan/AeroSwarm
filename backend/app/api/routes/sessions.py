@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import AuthContext, require_user_context
-from app.models.base import Agent, AuditEvent, ProviderConnection, Session, Task
+from app.models.base import Agent, AuditEvent, BackgroundJob, ProviderConnection, Session, Task
 from app.services.audit import AuditService
 from app.services.crypto import CredentialCryptoService
+from app.services.docker_manager import DockerManagerService
 from app.services.job_queue import JOB_TYPE_SESSION_BOOTSTRAP, JobQueueService
 from app.services.llm_factory import default_model_for_provider, normalize_llm_provider
 from app.services.provider_connections import ProviderConnectionService
@@ -26,6 +28,10 @@ crypto = CredentialCryptoService()
 vcs = VcsService()
 provider_connections = ProviderConnectionService()
 job_queue = JobQueueService()
+ACTIVE_SESSION_STATUSES = {"queued", "planning", "running", "merging"}
+STOPPABLE_TASK_STATUSES = {"pending", "running", "merging"}
+STOPPABLE_AGENT_STATUSES = {"initializing", "running", "idle", "error"}
+CANCELLABLE_JOB_STATUSES = {"queued", "running"}
 
 
 class CreateSessionRequest(BaseModel):
@@ -344,6 +350,90 @@ async def retry_session(
         retried_session,
         task_count=0,
         agent_count=0,
+    )
+
+
+@router.post("/{session_id}/stop", response_model=SessionResponse)
+async def stop_session(
+    session_id: uuid.UUID,
+    auth: AuthContext = Depends(require_user_context),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            Session.owner_user_id == auth.user_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    task_counts, agent_counts = await _load_counts_for_sessions(db, [session_id])
+    if session.status not in ACTIVE_SESSION_STATUSES and session.status != "stopped":
+        return _serialize_session(
+            session,
+            task_count=task_counts.get(session_id, 0),
+            agent_count=agent_counts.get(session_id, 0),
+        )
+
+    task_result = await db.execute(select(Task).where(Task.session_id == session_id))
+    tasks = task_result.scalars().all()
+    task_ids = [task.id for task in tasks]
+
+    agents: list[Agent] = []
+    if task_ids:
+        agent_result = await db.execute(select(Agent).where(Agent.task_id.in_(task_ids)))
+        agents = agent_result.scalars().all()
+
+    job_result = await db.execute(
+        select(BackgroundJob).where(
+            BackgroundJob.session_id == session_id,
+            BackgroundJob.status.in_(CANCELLABLE_JOB_STATUSES),
+        )
+    )
+    jobs = job_result.scalars().all()
+
+    docker_mgr = DockerManagerService()
+    stopped_at = datetime.now(timezone.utc)
+
+    for agent in agents:
+        if agent.container_id and agent.status in STOPPABLE_AGENT_STATUSES:
+            docker_mgr.stop_and_remove(agent.container_id)
+        agent.status = "stopped"
+        agent.stopped_at = stopped_at
+
+    for task in tasks:
+        if task.status in STOPPABLE_TASK_STATUSES:
+            task.status = "stopped"
+
+    for job in jobs:
+        job.status = "cancelled"
+        job.error_message = "Stopped by user"
+        job.locked_at = None
+        job.locked_by = None
+
+    if session.status != "stopped":
+        session.status = "stopped"
+        session.error_message = "Stopped by user"
+        await audit.record(
+            db,
+            "session.stopped",
+            auth.actor,
+            session_id=session.id,
+            details={
+                "stopped_agent_count": len(agents),
+                "cancelled_job_count": len(jobs),
+            },
+        )
+
+    await db.commit()
+    await db.refresh(session)
+
+    return _serialize_session(
+        session,
+        task_count=task_counts.get(session_id, 0),
+        agent_count=agent_counts.get(session_id, 0),
     )
 
 

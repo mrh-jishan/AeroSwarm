@@ -59,14 +59,21 @@ def build_graph() -> StateGraph:
     llm = _build_llm()
 
     def think(state: AgentState) -> dict:
-        from langchain_core.messages import SystemMessage
+        from langchain_core.messages import HumanMessage, SystemMessage
 
-        system = SystemMessage(content=f"""You are an expert software engineer.
-Your task: {state['task_description']}
-You MUST only read/write files within: {state['scope_dir']}
-Use your tools to complete the task. When done, output exactly: TASK_COMPLETE""")
+        system = SystemMessage(content="""You are an expert software engineer.
+Use the available tools to complete the assigned task.
+You MUST only read and write files inside the allowed scope directory.
+When the task is fully complete, output exactly: TASK_COMPLETE""")
+        task_prompt = HumanMessage(
+            content=(
+                f"Task: {state['task_description']}\n"
+                f"Allowed scope directory: {state['scope_dir']}\n"
+                "Inspect the existing code first, then make the required changes."
+            )
+        )
 
-        messages = [system] + state["messages"]
+        messages = [system, task_prompt] + state["messages"]
         response = llm.invoke(messages)
         return {
             "messages": [response],
